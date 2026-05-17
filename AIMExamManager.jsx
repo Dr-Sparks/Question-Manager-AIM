@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
+import AboutPage from "./src/AboutPage.jsx";
 
 // Color tokens — values come from CSS custom properties so dark/light mode works
 const C={tD:'var(--c-tD)',t:'var(--c-t)',tM:'var(--c-tM)',tL:'var(--c-tL)',tP:'var(--c-tP)',wW:'var(--c-wW)',st:'var(--c-st)',tx:'var(--c-tx)',mu:'var(--c-mu)',bo:'var(--c-bo)',ac:'var(--c-ac)',wh:'var(--c-wh)',re:'var(--c-re)',rP:'var(--c-rP)',gr:'var(--c-gr)',gP:'var(--c-gP)'};
@@ -1309,6 +1310,7 @@ function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMo
     {k:'exam',icon:'✎',label:'Prüfung erstellen'},
     {k:'export',icon:'↓',label:'Export & Download',badge:examCount||null},
     {k:'help',icon:'?',label:'Hilfe & Anleitung'},
+    {k:'about',icon:'★',label:'Über die App'},
     {k:'settings',icon:'⚙',label:'Einstellungen'},
   ];
   return(
@@ -3726,6 +3728,7 @@ export default function AIMExamManager(){
         {view==='exam'&&<ExamBuilder programs={programs} questions={questions} setView={navTo} onBuild={(qs,name)=>{setExam(qs);setExamName(name||'');showToast(`Prüfung „${name}“ mit ${qs.length} Fragen erstellt.`,'success');setView('export');}}/>}
         {view==='export'&&<ExportView exam={exam} programName={examName} setView={navTo} showToast={showToast} showConfirm={showConfirm} onSaveAndNew={(savedName)=>{if(!exam?.length)return;const snapshot=createSavedExamSnapshot(exam,savedName||examName||'Prüfung',examName||'Prüfung');setSavedExams(prev=>[snapshot,...prev]);setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}showToast(`Prüfung „${snapshot.name}“ gespeichert. Neue Prüfung kann gestartet werden.`,'success');setView('exam');}} onUpdateExam={updater=>setExam(prev=>typeof updater==='function'?updater(prev||[]):updater)} onClear={()=>{setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}}}/>}
         {view==='help'&&<HelpPage/>}
+        {view==='about'&&<AboutPage/>}
         {view==='settings'&&<SettingsPage settings={settings} setSettings={setSettings} darkMode={darkMode} onToggleDark={v=>setDarkMode(typeof v==='boolean'?v:d=>!d)}/>}
       </div>
       <ToastContainer toasts={toasts} onRemove={id=>setToasts(prev=>prev.filter(t=>t.id!==id))}/>

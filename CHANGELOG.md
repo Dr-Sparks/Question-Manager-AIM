@@ -4,6 +4,35 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.10] — 2026-05-18
+
+### Hinzugefügt
+- **Neue Seite „Über die App"** im Sidebar zwischen Hilfe & Anleitung und
+  Einstellungen. Onboarding für nicht-technische Nutzer:innen mit:
+  - Willkommens-Hero und kurzer Erklärung
+  - **5 animierte Tour-Szenen** — Live-Mini-Mockups der App-UI, die durch
+    die wichtigsten Abläufe führen:
+    1. Frage hinzufügen (Formular wird ausgefüllt, Toast erscheint)
+    2. Weiterbildungsgang einrichten (Semestermatrix wird gefüllt)
+    3. Prüfung erstellen (Programm → Module → Zähler)
+    4. Als PDF speichern (Toolbar-Klick → PDF-Datei)
+    5. Datensicherung (JSON-Export)
+  - **„Erste Schritte"-Checkliste** mit 5 Aufgaben, Fortschritt wird in
+    `aim_about_checklist_v1` gespeichert
+  - **Über-Info-Block** mit Version, Datenort, Update-Hinweis und © AIM
+- Animationen sind reine CSS-Keyframes + React-State-Maschinen (kein Video,
+  keine schweren Assets). `prefers-reduced-motion` pausiert alle
+  Animationen für Nutzer:innen mit entsprechender Systemeinstellung.
+
+### Technisch
+- Neue Datei `src/AboutPage.jsx` (~700 Zeilen, in sich abgeschlossen).
+- Vom Monolith via Import + Route eingebunden, eine Sidebar-Zeile + ein
+  `view==='about'`-Eintrag.
+- Mock-UI-Primitive (`MockButton`, `MockInput`, `MockBadge`, `MockToast`,
+  `MockCursor`, `MockStage`) wiederverwendbar pro Szene.
+- `useLoop(steps, interval)` Hook treibt jede Szene; säubert sich beim
+  Unmount automatisch.
+
 ## [1.0.9] — 2026-05-17
 
 ### Hinzugefügt
