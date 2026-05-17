@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write  # required to upload release artifacts
+
+jobs:
+  build-mac:
+    name: Build Mac DMG (arm64)
+    runs-on: macos-14  # Apple Silicon runner
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build and publish Mac DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Unsigned build for v1. To sign later: set CSC_LINK + CSC_KEY_PASSWORD
+          # (and APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID for notarization),
+          # then change `identity: null` in package.json's build.mac.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run release:mac
+
+      - name: Upload artifacts (debug aid)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-release
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
+          if-no-files-found: warn
+
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build and publish Windows installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Unsigned build for v1. To sign later: provide WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run release:win
+
+      - name: Upload artifacts (debug aid)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: warn

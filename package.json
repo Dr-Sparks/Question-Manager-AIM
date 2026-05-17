@@ -1,0 +1,119 @@
+{
+  "name": "aim-pruefungs-manager",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AIM Pruefungs-Manager als Desktop-App",
+  "author": "Dr-Sparks",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:web": "vite build",
+    "start:electron": "electron .",
+    "build:mac": "npm run build:web && electron-builder --mac --arm64",
+    "build:win": "npm run build:web && electron-builder --win --x64",
+    "build:dir": "npm run build:web && electron-builder --dir",
+    "release": "npm run build:web && electron-builder --publish always",
+    "release:mac": "npm run build:web && electron-builder --mac --arm64 --publish always",
+    "release:win": "npm run build:web && electron-builder --win --x64 --publish always",
+    "preview": "vite preview",
+    "test": "node --test AIMExamManager.helpers.test.js"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.3",
+    "jszip": "^3.10.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^41.3.0",
+    "electron-builder": "^26.8.1",
+    "vite": "^5.4.10"
+  },
+  "build": {
+    "appId": "ch.aim.pruefungsmanager",
+    "productName": "AIM Pruefungs-Manager",
+    "copyright": "Copyright © 2026 AIM",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "AIM_Leervorlage.json",
+        "to": "AIM_Leervorlage.json"
+      },
+      {
+        "from": "AIM_Leervorlage.xlsx",
+        "to": "AIM_Leervorlage.xlsx"
+      }
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Dr-Sparks",
+        "repo": "Question-Manager-AIM",
+        "releaseType": "release"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.education",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64"]
+        }
+      ],
+      "icon": "build/icons/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "identity": null,
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "AIM Pruefungs-Manager",
+      "icon": "build/icons/icon.icns",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        { "x": 140, "y": 200, "type": "file" },
+        { "x": 400, "y": 200, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "AIM Pruefungs-Manager"
+    }
+  }
+}
