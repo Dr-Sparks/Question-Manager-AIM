@@ -1258,7 +1258,7 @@ function AimLogo({size=32}){
 }
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
-function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMode,onToggleDark}){
+function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMode,onToggleDark,lastSavedAt}){
   const nav=[
     {k:'dashboard',icon:'▦',label:'Dashboard'},
     {k:'questions',icon:'≡',label:'Fragen Datenbank',badge:qCount},
@@ -1294,6 +1294,7 @@ function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMo
           );
         })}
       </nav>
+      {!collapsed&&<SaveIndicator lastSavedAt={lastSavedAt}/>}
       <div style={{borderTop:'1px solid rgba(255,255,255,0.1)',padding:collapsed?'8px 0':'8px 12px',display:'flex',alignItems:'center',justifyContent:collapsed?'center':'space-between',gap:8}}>
         {!collapsed&&<span style={{fontSize:'11px',color:'rgba(200,190,180,0.7)'}}>AIM AG · Basel · Bern · Zürich</span>}
         <button onClick={onToggleDark} aria-label={darkMode?'Hellmodus':'Dunkelmodus'} title={darkMode?'Hellmodus':'Dunkelmodus'} style={{background:'rgba(255,255,255,0.1)',border:'none',borderRadius:6,color:'rgba(255,255,255,0.8)',cursor:'pointer',padding:'5px 8px',fontSize:'14px',lineHeight:1}}>{darkMode?'☀️':'🌙'}</button>
@@ -1302,10 +1303,81 @@ function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMo
   );
 }
 
+// Small status chip in the sidebar footer that flashes "Gespeichert ✓ HH:MM"
+// briefly after each successful persist, then fades to a less prominent
+// "Letzte Sicherung: HH:MM" so the user always knows their work is safe.
+function SaveIndicator({lastSavedAt}){
+  const[recent,setRecent]=useState(false);
+  useEffect(()=>{
+    if(!lastSavedAt) return;
+    setRecent(true);
+    const t=setTimeout(()=>setRecent(false),2500);
+    return ()=>clearTimeout(t);
+  },[lastSavedAt]);
+  if(!lastSavedAt) return null;
+  const stamp=new Date(lastSavedAt).toLocaleTimeString('de-CH',{hour:'2-digit',minute:'2-digit'});
+  return(
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        padding:'6px 12px',
+        borderTop:'1px solid rgba(255,255,255,0.06)',
+        fontSize:'11px',
+        color:recent?'#86efac':'rgba(200,190,180,0.55)',
+        display:'flex',
+        alignItems:'center',
+        gap:6,
+        transition:'color 0.4s',
+      }}
+    >
+      <span aria-hidden>{recent?'✓':'·'}</span>
+      <span>{recent?`Gespeichert ${stamp}`:`Letzte Sicherung ${stamp}`}</span>
+    </div>
+  );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
-function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuestions,setPrograms,setSavedExams,setExam,setExamName,showToast,showConfirm,onClearAllData}){
+function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuestions,setPrograms,setSavedExams,setExam,setExamName,showToast,showConfirm,onClearAllData,saveLastBackup}){
   const restoreRef=useRef(null);
   const excelImportRef=useRef(null);
+  // Tick to force re-read of aim_last_backup when destructive ops run.
+  const[lastBackupTick,setLastBackupTick]=useState(0);
+  const lastBackupMeta=React.useMemo(()=>{
+    try{
+      const raw=window.localStorage.getItem('aim_last_backup');
+      if(!raw) return null;
+      const parsed=JSON.parse(raw);
+      return{
+        capturedAt:parsed.capturedAt,
+        questionCount:parsed.questions?.length||0,
+        programCount:parsed.programs?.length||0,
+        examCount:parsed.savedExams?.length||0,
+      };
+    }catch{ return null; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[questions,programs,savedExams,exam,lastBackupTick]);
+  const restoreLastBackup=()=>{
+    if(!lastBackupMeta) return;
+    showConfirm({
+      message:`Letzten gespeicherten Stand vom ${new Date(lastBackupMeta.capturedAt).toLocaleString('de-CH')} wiederherstellen? Aktuelle Daten werden überschrieben (und vor dem Wiederherstellen erneut gesichert).`,
+      confirmLabel:'Wiederherstellen',
+      confirmV:'danger',
+      onConfirm:()=>{
+        try{
+          const raw=window.localStorage.getItem('aim_last_backup');
+          if(!raw){ showToast('Kein gespeicherter Stand vorhanden.','error'); return; }
+          const data=JSON.parse(raw);
+          // Snapshot CURRENT state first so the user can undo the undo.
+          saveLastBackup?.();
+          applyRestore(data);
+          setLastBackupTick(t=>t+1);
+        }catch{
+          showToast('Stand konnte nicht wiederhergestellt werden.','error');
+        }
+      },
+    });
+  };
   const courses=[...new Set(questions.map(q=>q.course))];
   const fmtCounts=FORMATS.map(f=>({f,n:questions.filter(q=>q.format===f).length}));
   // Snapshot the help-manual content + all gallery (image) entries from
@@ -1382,7 +1454,10 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
         reader.onload=evt=>{
           try{
             const data=JSON.parse(evt.target.result);
+            // Snapshot current state first so the user can recover.
+            saveLastBackup?.();
             applyRestore(data);
+            setLastBackupTick(t=>t+1);
           }catch{ showToast('Backup-Datei konnte nicht gelesen werden.','error'); }
         };
         reader.readAsText(file);
@@ -1396,7 +1471,11 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
       message:`Die aktuelle Datenbank wird durch den Inhalt von „${file.name}“ ersetzt. Fortfahren?`,
       confirmLabel:'Importieren',
       confirmV:'danger',
-      onConfirm:()=>importExcel(file,setQuestions,setPrograms,setSavedExams,showToast,normalizePrograms),
+      onConfirm:()=>{
+        saveLastBackup?.();
+        importExcel(file,setQuestions,setPrograms,setSavedExams,showToast,normalizePrograms);
+        setLastBackupTick(t=>t+1);
+      },
     });
   };
   return(
@@ -1474,9 +1553,20 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
         </div>
         <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,padding:16,marginTop:16}}>
           <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>Daten zurücksetzen</div>
-          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Löscht alle Fragen, Weiterbildungsgänge, gespeicherten Prüfungen und die aktuell erstellte Prüfung aus der App. Danach kann direkt eine neue JSON- oder Excel-Version importiert werden.</p>
-          <Btn ch="✕ Alle Daten löschen" onClick={()=>showConfirm({message:'Möchtest du wirklich alle Daten in der App löschen? Fragen, Weiterbildungsgänge, gespeicherte Prüfungen und die aktuelle Prüfung werden entfernt. Dieser Schritt ist nur sinnvoll, wenn du danach ein neues Backup importierst.',confirmLabel:'Alle Daten löschen',confirmV:'danger',onConfirm:onClearAllData})} v="danger"/>
+          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Löscht alle Fragen, Weiterbildungsgänge, gespeicherten Prüfungen und die aktuell erstellte Prüfung aus der App. Danach kann direkt eine neue JSON- oder Excel-Version importiert werden. <strong>Der bisherige Stand wird automatisch gesichert</strong> und kann unten wiederhergestellt werden.</p>
+          <Btn ch="✕ Alle Daten löschen" onClick={()=>showConfirm({message:'Möchtest du wirklich alle Daten in der App löschen? Fragen, Weiterbildungsgänge, gespeicherte Prüfungen und die aktuelle Prüfung werden entfernt. Der vorherige Stand wird automatisch gesichert.',confirmLabel:'Alle Daten löschen',confirmV:'danger',onConfirm:onClearAllData})} v="danger"/>
         </div>
+        {lastBackupMeta&&(
+          <div style={{background:C.gP,border:`1px solid #86efac`,borderRadius:8,padding:16,marginTop:16}}>
+            <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.gr,marginBottom:8,fontWeight:500}}>↺ Letzten Stand wiederherstellen</div>
+            <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>
+              Automatische Sicherung vom <strong>{new Date(lastBackupMeta.capturedAt).toLocaleString('de-CH')}</strong> ·{' '}
+              {lastBackupMeta.questionCount} Fragen, {lastBackupMeta.programCount} Weiterbildungsgänge, {lastBackupMeta.examCount} gespeicherte Prüfungen.
+              <br/>Wird automatisch erstellt, bevor Daten gelöscht oder ein Backup importiert wird.
+            </p>
+            <Btn ch="↺ Letzten Stand wiederherstellen" onClick={restoreLastBackup} v="success"/>
+          </div>
+        )}
         <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,padding:16,marginTop:16}}>
           <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>Gespeicherte Prüfungen</div>
           {savedExams.length===0?(
@@ -2096,9 +2186,12 @@ function Programs({programs,setPrograms,questions,showToast,showConfirm,settings
             {[
               {key:'normal',label:'Standard'},
               {key:'compact',label:'Kompakt'},
-            ].map(v=>(
-              <button key={v.key} onClick={()=>setCompact(v.key==='compact')} style={{padding:'4px 9px',borderRadius:4,border:'none',cursor:'pointer',fontSize:'12px',fontFamily:sans,background:(compact? 'compact':'normal')===v.key?'var(--c-wh)':'transparent',color:(compact? 'compact':'normal')===v.key?'var(--c-tD)':'var(--c-mu)',fontWeight:(compact? 'compact':'normal')===v.key?600:400}}>{v.label}</button>
-            ))}
+            ].map(v=>{
+              const active=(v.key==='compact')===compact;
+              return(
+                <button key={v.key} onClick={()=>setCompact(v.key==='compact')} style={{padding:'4px 9px',borderRadius:4,border:'none',cursor:'pointer',fontSize:'12px',fontFamily:sans,background:active?'var(--c-wh)':'transparent',color:active?'var(--c-tD)':'var(--c-mu)',fontWeight:active?600:400}}>{v.label}</button>
+              );
+            })}
           </div>
           <div style={{display:'flex',gap:4,background:'var(--c-st)',borderRadius:6,padding:3}}>
             {SCALE_STEPS.map(s=>(
@@ -2131,7 +2224,7 @@ function Programs({programs,setPrograms,questions,showToast,showConfirm,settings
 }
 
 // ─── Exam Builder ─────────────────────────────────────────────────────────────
-function ExamBuilder({programs,questions,onBuild}){
+function ExamBuilder({programs,questions,onBuild,setView}){
   const[selectedProgramId,setSelectedProgramId]=useState(null);
   const[selectedModuleKeys,setSelectedModuleKeys]=useState(new Set());
   const[built,setBuilt]=useState(false);
@@ -2233,7 +2326,7 @@ function ExamBuilder({programs,questions,onBuild}){
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginLeft:'auto'}}>
           {selectedProgram&&<Btn ch="✕ Zurücksetzen" onClick={reset} v="ghost" sm/>}
           <Btn ch="Prüfung erstellen →" onClick={build} v="primary" dis={!selectedProgram||selectedModules.length===0}/>
-          {built&&<Btn ch="Zum Export ↓" onClick={()=>document.querySelector('[data-nav=export]')?.click()} v="accent"/>}
+          {built&&<Btn ch="Zum Export ↓" onClick={()=>setView?.('export')} v="accent"/>}
         </div>
       </div>
       <div style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:13,color:'var(--c-mu)'}}>
@@ -3348,11 +3441,15 @@ export default function AIMExamManager(){
 
   // Persist effects — wrap every write so a quota overflow doesn't kill the
   // render commit. Show a toast at most once per session so we don't spam.
+  // Also track lastSavedAt for the small "Gespeichert" indicator in the
+  // sidebar footer so users can see at a glance that their work is safe.
   const persistErrorShownRef=useRef(false);
+  const[lastSavedAt,setLastSavedAt]=useState(0);
   const safePersist=useCallback((key,value)=>{
     try{
       window.localStorage.setItem(key,value);
       persistErrorShownRef.current=false;
+      setLastSavedAt(Date.now());
     }catch(err){
       if(!persistErrorShownRef.current){
         persistErrorShownRef.current=true;
@@ -3361,7 +3458,48 @@ export default function AIMExamManager(){
     }
   },[showToast]);
 
+  // Snapshot ALL user data to `aim_last_backup`. Called automatically before
+  // any destructive operation (clearAllData, JSON restore, Excel import).
+  // The Dashboard exposes a "Letzten Stand wiederherstellen" button when
+  // this key is present so a regret-click is always one click away from
+  // being undone.
+  const saveLastBackup=useCallback(()=>{
+    try{
+      let help=null;
+      const galleries={};
+      try{
+        const raw=window.localStorage.getItem('aim_help_v2');
+        if(raw) help=JSON.parse(raw);
+      }catch{}
+      try{
+        for(let i=0;i<window.localStorage.length;i++){
+          const key=window.localStorage.key(i);
+          if(key && key.startsWith('aim_gallery_')){
+            try{ galleries[key]=JSON.parse(window.localStorage.getItem(key)||'null'); }catch{}
+          }
+        }
+      }catch{}
+      const snapshot={
+        version:3,
+        capturedAt:new Date().toISOString(),
+        reason:'auto-before-destructive-op',
+        questions,
+        programs,
+        savedExams,
+        currentExam:exam?{exam,name:examName||''}:null,
+        help,
+        galleries,
+      };
+      window.localStorage.setItem('aim_last_backup',JSON.stringify(snapshot));
+    }catch{
+      // If we can't snapshot (quota), the destructive op still proceeds —
+      // the user has been warned about storage issues via safePersist.
+    }
+  },[questions,programs,savedExams,exam,examName]);
+
   const clearAllData=useCallback(()=>{
+    // Snapshot first so "Letzten Stand wiederherstellen" can undo the wipe.
+    saveLastBackup();
     setQuestions([]);
     setPrograms([]);
     setSavedExams([]);
@@ -3369,8 +3507,8 @@ export default function AIMExamManager(){
     setExamName('');
     // Wipe ALL data-bearing keys (including help content and every gallery
     // entry). Preserve user-preference keys (dark mode, sidebar, settings,
-    // init flag, update-dismissed) so the app's chrome stays as the user
-    // configured it.
+    // init flag, update-dismissed, last_backup) so the app's chrome stays
+    // as the user configured it AND the safety net survives.
     const DATA_KEYS=['aim_q','aim_p','aim_saved_exams','aim_exam','aim_help_v2'];
     try{
       DATA_KEYS.forEach(k=>window.localStorage.removeItem(k));
@@ -3380,8 +3518,8 @@ export default function AIMExamManager(){
       }
     }catch{}
     setView('dashboard');
-    showToast('Alle App-Daten wurden gelöscht. Du kannst jetzt eine neue JSON- oder Excel-Datei importieren.','success');
-  },[showToast]);
+    showToast('Alle App-Daten wurden gelöscht. Vorheriger Stand wurde gesichert (siehe Dashboard → Letzten Stand wiederherstellen).','success');
+  },[showToast,saveLastBackup]);
 
   const toggleSidebar=()=>{
     setSidebarCollapsed(prev=>{
@@ -3469,12 +3607,12 @@ export default function AIMExamManager(){
 
   return(
     <div style={{display:'flex',minHeight:'100vh',fontFamily:sans,background:C.wW}}>
-      <Sidebar view={view} setView={navTo} qCount={questions.length} pCount={programs.length} examCount={exam?.length} collapsed={sidebarCollapsed} onToggle={toggleSidebar} darkMode={darkMode} onToggleDark={()=>setDarkMode(d=>!d)}/>
+      <Sidebar view={view} setView={navTo} qCount={questions.length} pCount={programs.length} examCount={exam?.length} collapsed={sidebarCollapsed} onToggle={toggleSidebar} darkMode={darkMode} onToggleDark={()=>setDarkMode(d=>!d)} lastSavedAt={lastSavedAt}/>
       <div style={{flex:1,overflow:'auto'}}>
-        {view==='dashboard'&&<Dashboard questions={questions} programs={programs} exam={exam} examName={examName} savedExams={savedExams} setView={navTo} setQuestions={setQuestions} setPrograms={setPrograms} setSavedExams={setSavedExams} setExam={setExam} setExamName={setExamName} showToast={showToast} showConfirm={showConfirm} onClearAllData={clearAllData}/>}
+        {view==='dashboard'&&<Dashboard questions={questions} programs={programs} exam={exam} examName={examName} savedExams={savedExams} setView={navTo} setQuestions={setQuestions} setPrograms={setPrograms} setSavedExams={setSavedExams} setExam={setExam} setExamName={setExamName} showToast={showToast} showConfirm={showConfirm} onClearAllData={clearAllData} saveLastBackup={saveLastBackup}/>}
         {view==='questions'&&<QuestionDB questions={questions} setQuestions={setQuestions} showToast={showToast} showConfirm={showConfirm}/>}
         {view==='programs'&&<Programs programs={programs} setPrograms={setPrograms} questions={questions} showToast={showToast} showConfirm={showConfirm} settings={settings}/>}
-        {view==='exam'&&<ExamBuilder programs={programs} questions={questions} onBuild={(qs,name)=>{setExam(qs);setExamName(name||'');showToast(`Prüfung „${name}“ mit ${qs.length} Fragen erstellt.`,'success');setView('export');}}/>}
+        {view==='exam'&&<ExamBuilder programs={programs} questions={questions} setView={navTo} onBuild={(qs,name)=>{setExam(qs);setExamName(name||'');showToast(`Prüfung „${name}“ mit ${qs.length} Fragen erstellt.`,'success');setView('export');}}/>}
         {view==='export'&&<ExportView exam={exam} programName={examName} setView={navTo} showToast={showToast} showConfirm={showConfirm} onSaveAndNew={(savedName)=>{if(!exam?.length)return;const snapshot=createSavedExamSnapshot(exam,savedName||examName||'Prüfung',examName||'Prüfung');setSavedExams(prev=>[snapshot,...prev]);setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}showToast(`Prüfung „${snapshot.name}“ gespeichert. Neue Prüfung kann gestartet werden.`,'success');setView('exam');}} onUpdateExam={updater=>setExam(prev=>typeof updater==='function'?updater(prev||[]):updater)} onClear={()=>{setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}}}/>}
         {view==='help'&&<HelpPage/>}
         {view==='settings'&&<SettingsPage settings={settings} setSettings={setSettings} darkMode={darkMode} onToggleDark={v=>setDarkMode(typeof v==='boolean'?v:d=>!d)}/>}

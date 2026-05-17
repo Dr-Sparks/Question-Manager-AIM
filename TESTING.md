@@ -6,7 +6,7 @@ Diese Liste wird **vor jedem Release** am gebauten `.dmg` / `.exe` durchgegangen
 
 - [ ] `npm test` ist gruen (alle Unit-Tests bestehen)
 - [ ] `npm run build:web` ist erfolgreich
-- [ ] `npm run build:mac` produziert `release/AIM Pruefungs-Manager-<VERSION>-mac-arm64.dmg`
+- [ ] `npm run build:mac` produziert `release/AIM Pruefungs-Manager-mac-arm64.dmg` (Dateiname enthält keine Version mehr — stabile URL fuer Auto-Update)
 - [ ] DMG geoeffnet, App in Programme gezogen
 - [ ] App startet beim ersten Doppelklick (oder Rechtsklick → Oeffnen)
 - [ ] Fenster oeffnet ohne Fehler in der nativen Konsole

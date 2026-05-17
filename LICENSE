@@ -1,0 +1,26 @@
+Copyright (c) 2026 AIM. All rights reserved.
+
+This software and the accompanying source files in this repository are
+provided for internal use by AIM and authorised users only.
+
+No part of this software may be reproduced, distributed, modified, or
+transmitted in any form or by any means without the prior written
+permission of AIM, except in the cases of:
+
+  - Personal use by authorised individuals within AIM.
+  - Brief excerpts quoted in technical discussions, code reviews, or
+    bug reports.
+
+Third-party dependencies retain their original licenses; see
+`package.json` and the `node_modules/` tree for upstream license texts.
+
+The software is provided "as is", without warranty of any kind,
+express or implied, including but not limited to the warranties of
+merchantability, fitness for a particular purpose, and noninfringement.
+In no event shall the authors or copyright holders be liable for any
+claim, damages, or other liability, whether in an action of contract,
+tort, or otherwise, arising from, out of, or in connection with the
+software or the use or other dealings in the software.
+
+For licensing inquiries or to request permission for other uses, contact:
+  noreply@aim.ch

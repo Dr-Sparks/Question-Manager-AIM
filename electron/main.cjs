@@ -2,6 +2,7 @@ const path = require("path");
 const { app, BrowserWindow, shell, session } = require("electron");
 const { buildMenu } = require("./menu.cjs");
 const { initUpdater, checkForUpdates } = require("./updater.cjs");
+const windowState = require("./window-state.cjs");
 
 const PRODUCT_NAME = "AIM Pruefungs-Manager";
 app.setName(PRODUCT_NAME);
@@ -17,8 +18,8 @@ let mainWindow = null;
 
 function applyCsp() {
   // Strict CSP. Everything ships bundled, so no remote loads of any kind.
-  // 'unsafe-inline' on style-src is required by the existing inline-styled
-  // React app (3258-line component uses style objects + an injected <style>).
+  // 'unsafe-inline' on style-src is required by the inline-styled React app
+  // (the monolith uses style objects + an injected <style> for the theme).
   const csp = [
     "default-src 'self'",
     "script-src 'self'",
@@ -43,9 +44,13 @@ function applyCsp() {
 }
 
 function createWindow() {
+  // Restore saved window geometry (or use defaults on first launch).
+  const ws = windowState.load();
   mainWindow = new BrowserWindow({
-    width: 1600,
-    height: 980,
+    x: ws.state.x,
+    y: ws.state.y,
+    width: ws.state.width,
+    height: ws.state.height,
     minWidth: 1200,
     minHeight: 760,
     title: PRODUCT_NAME,
@@ -59,6 +64,7 @@ function createWindow() {
       spellcheck: false,
     },
   });
+  ws.manage(mainWindow);
 
   // External links always open in the system browser, never inside the app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
