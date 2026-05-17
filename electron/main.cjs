@@ -67,8 +67,30 @@ function createWindow() {
   ws.manage(mainWindow);
 
   // External links always open in the system browser, never inside the app.
+  // BUT we MUST allow `window.open('', '_blank')` for the print-window flow
+  // — `printAsPdf` and `printHelpManualPdf` open a blank window, write the
+  // print HTML into it via document.write(), and call w.print(). If we deny
+  // blank/about:blank, those functions silently no-op and clicking "PDF
+  // drucken" appears to do nothing.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+      return { action: "deny" };
+    }
+    if (!url || url === "about:blank") {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          backgroundColor: "#ffffff",
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        },
+      };
+    }
     return { action: "deny" };
   });
 

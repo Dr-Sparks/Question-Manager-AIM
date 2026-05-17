@@ -789,9 +789,13 @@ function importExcel(file, setQuestions, setPrograms, setSavedExams, showToast, 
 // The questions can come from user-supplied Excel or JSON imports, so without
 // escaping a poisoned import could XSS the print window (file:// origin in
 // the packaged Electron build = local file access).
+//
+// Returns true on success, false if the print window couldn't be opened.
+// Callers should surface a toast on false so the user gets feedback instead
+// of a silent no-op.
 function printAsPdf(qs,title){
   const w=window.open('','_blank');
-  if(!w)return;
+  if(!w)return false;
   const body=qs.map((q,i)=>{
     const correct=q.answer?q.answer.split(';'):[];
     const opts=[{k:'A',t:q.optA},{k:'B',t:q.optB},{k:'C',t:q.optC},{k:'D',t:q.optD},{k:'E',t:q.optE}].filter(o=>o.t);
@@ -806,6 +810,7 @@ function printAsPdf(qs,title){
   w.document.close();
   w.focus();
   setTimeout(()=>w.print(),400);
+  return true;
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -2391,7 +2396,10 @@ function ExportView({exam,programName,setView,showToast,showConfirm,onSaveAndNew
           <Btn ch="💾 Speichern & neu" onClick={openSaveDialog} v="primary"/>
           <Btn ch={copied?'✓ Kopiert!':'Kopieren'} onClick={copy} v={copied?'success':'ghost'}/>
           <Btn ch="↓ TXT" onClick={()=>dlFile(txt,`AIM_Pruefung_${(programName||'Export').replace(/\s+/g,'_')}.txt`)} v="secondary"/>
-          <Btn ch="↓ PDF drucken" onClick={()=>printAsPdf(exam,`AIM Prüfung – ${programName||'Export'}`)} v="accent"/>
+          <Btn ch="↓ PDF drucken" onClick={()=>{
+            const ok=printAsPdf(exam,`AIM Prüfung – ${programName||'Export'}`);
+            if(!ok) showToast('PDF-Druckfenster konnte nicht geöffnet werden. Bitte App neu starten und erneut versuchen.','error');
+          }} v="accent"/>
           <Btn ch="✕ Prüfung löschen" onClick={onClear} v="ghost"/>
         </div>
       }/>
@@ -3063,7 +3071,7 @@ function renderHelpBlockHtml(block,storageScope){
 
 function printHelpManualPdf(manualKey, manualData){
   const w=window.open('','_blank');
-  if(!w)return;
+  if(!w)return false;
   const sectionsHtml=(manualData.sections||[]).map(section=>{
     const content=manualData.content?.[section.k];
     if(!content)return '';
@@ -3105,6 +3113,7 @@ function printHelpManualPdf(manualKey, manualData){
   w.document.close();
   w.focus();
   setTimeout(()=>w.print(),500);
+  return true;
 }
 
 function HelpPage(){
@@ -3327,7 +3336,10 @@ function HelpPage(){
           <Btn ch="↑ Handbuch importieren" onClick={()=>importRef.current?.click()} v="ghost" sm/>
           <Btn ch="↓ Handbuch exportieren" onClick={exportManual} v="ghost" sm/>
           {editMode&&curManual?.isCustom&&<Btn ch="✕ Handbuch löschen" onClick={deleteManual} v="danger" sm/>}
-          <Btn ch="↓ Handbuch als PDF" onClick={()=>printHelpManualPdf(manual,curManual)} v="ghost" sm/>
+          <Btn ch="↓ Handbuch als PDF" onClick={()=>{
+            const ok=printHelpManualPdf(manual,curManual);
+            if(!ok) window.alert('PDF-Druckfenster konnte nicht geöffnet werden. Bitte App neu starten und erneut versuchen.');
+          }} v="ghost" sm/>
           {unsaved&&editMode&&<span style={{fontSize:'12px',color:C.tM,fontWeight:500}}>● Ungespeichert</span>}
           {editMode&&<Btn ch="💾 Speichern" onClick={save} v="primary" sm/>}
           <Btn ch={editMode?'🔒 Sperren':'🔓 Bearbeiten'} onClick={()=>{setEditMode(m=>!m);}} v={editMode?'secondary':'ghost'} sm/>
