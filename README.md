@@ -46,15 +46,25 @@ Das ist nur beim allerersten Start nötig. Danach öffnet sich die App per Doppe
 
 ## Automatische Updates
 
-Die App prüft bei jedem Start im Hintergrund, ob eine neue Version verfügbar ist. Falls ja, erscheint oben im Fenster ein grüner Banner:
+Die App prüft bei jedem Start im Hintergrund, ob eine neue Version verfügbar ist. Falls ja, erscheint oben im Fenster ein grüner Banner.
 
+### Windows
 > ✓ **Version X.Y.Z** ist bereit zur Installation. `[Später]` `[Jetzt aktualisieren]`
 
 - `Jetzt aktualisieren` schliesst die App, installiert die neue Version und startet sie automatisch wieder
 - `Später` blendet den Banner für diese Version aus
-- Manuelle Prüfung jederzeit möglich über `AIM Prüfungs-Manager` → `Nach Updates suchen…` (Mac) bzw. `Hilfe` → `Nach Updates suchen…` (Windows)
 
-Die App-Daten (Fragen, Weiterbildungsgänge, gespeicherte Prüfungen, Einstellungen) bleiben bei Updates erhalten.
+### Mac
+> ↓ **Version X.Y.Z** ist verfügbar. `[Später]` `[Jetzt herunterladen]`
+
+- `Jetzt herunterladen` öffnet die Download-Seite im Browser. Die neue `.dmg` herunterladen, doppelklicken und das App-Symbol auf den `Applications`-Ordner ziehen (überschreibt die alte Version)
+- `Später` blendet den Banner für diese Version aus
+
+Die zusätzliche Manuell-Installation auf Mac ist eine Folge davon, dass die App noch nicht von Apple signiert ist. Mit einem Apple Developer ID-Zertifikat würde sich Mac genauso verhalten wie Windows (Ein-Klick-Installation).
+
+### Beide Plattformen
+- Manuelle Prüfung jederzeit möglich über `AIM Prüfungs-Manager` → `Nach Updates suchen…` (Mac) bzw. `Hilfe` → `Nach Updates suchen…` (Windows)
+- Die App-Daten (Fragen, Weiterbildungsgänge, gespeicherte Prüfungen, Einstellungen) bleiben bei Updates erhalten
 
 ## Was die App macht
 

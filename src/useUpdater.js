@@ -10,10 +10,12 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 
 const NOOP_API = {
+  platform: "unknown",
   getAppVersion: async () => "dev",
   onUpdateStatus: () => () => {},
   checkForUpdates: async () => {},
   quitAndInstall: async () => {},
+  openDownloadUrl: async () => false,
 };
 
 function getApi() {
@@ -54,6 +56,7 @@ export function useUpdater() {
 
   const checkForUpdates = useCallback(() => getApi().checkForUpdates(), []);
   const installNow = useCallback(() => getApi().quitAndInstall(), []);
+  const openDownload = useCallback(() => getApi().openDownloadUrl(), []);
 
   const dismiss = useCallback(() => {
     const v = statusRef.current?.info?.version;
@@ -74,9 +77,11 @@ export function useUpdater() {
   return {
     status,
     version,
+    platform: getApi().platform,
     isDismissed,
     checkForUpdates,
     installNow,
+    openDownload,
     dismiss,
   };
 }

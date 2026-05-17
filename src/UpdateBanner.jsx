@@ -4,14 +4,15 @@ import { useUpdater } from "./useUpdater.js";
 // Visible only when an update is actionable. We never block the UI — the
 // banner sits above the main app and pushes content down a few pixels.
 //
-// Visible states:
-//   downloading -> shows percent
-//   downloaded  -> "install now" CTA + dismiss for this version
-//   error       -> compact error line
-//
-// 'available' alone is hidden because autoDownload=true (see updater.cjs) —
-// users see 'downloading' immediately and then 'downloaded', which is when
-// the install button is meaningful.
+// Platform behaviour:
+//   - Mac (darwin):  shows on 'available'. Action = open DMG URL in browser
+//                    so the user downloads + drags new .app to /Applications.
+//                    Squirrel.Mac can't do in-place updates for ad-hoc signed
+//                    builds, so we don't even try.
+//   - Windows:       shows on 'downloaded'. Action = quitAndInstall.
+//                    NSIS handles unsigned updates fine.
+//   - Both:          'downloading' shows progress; 'error' shows a compact
+//                    error line (only for non-benign errors).
 
 const sans = "'Source Sans 3',system-ui,sans-serif";
 
@@ -57,9 +58,34 @@ function formatBytes(n) {
 }
 
 export default function UpdateBanner() {
-  const { status, isDismissed, installNow, dismiss } = useUpdater();
+  const { status, platform, isDismissed, installNow, openDownload, dismiss } =
+    useUpdater();
   const { state, info, progress, error } = status || {};
+  const isMac = platform === "darwin";
 
+  // Mac: "available" is actionable (we skip auto-download — see updater.cjs).
+  if (isMac && state === "available" && info?.version && !isDismissed) {
+    return (
+      <div
+        style={{ ...wrap, background: "var(--c-gP)", color: "var(--c-tx)" }}
+        role="status"
+        aria-live="polite"
+      >
+        <span style={{ fontSize: 18 }} aria-hidden>↓</span>
+        <span style={{ flex: 1 }}>
+          <strong>Version {info.version}</strong> ist verfuegbar.
+        </span>
+        <button type="button" style={btnGhost} onClick={dismiss}>
+          Spaeter
+        </button>
+        <button type="button" style={btnPrimary} onClick={openDownload}>
+          Jetzt herunterladen
+        </button>
+      </div>
+    );
+  }
+
+  // Windows: 'downloading' shows progress while the NSIS installer is fetched.
   if (state === "downloading") {
     const pct = progress?.percent ? Math.round(progress.percent) : 0;
     return (
@@ -77,6 +103,7 @@ export default function UpdateBanner() {
     );
   }
 
+  // Windows: 'downloaded' is actionable — quitAndInstall runs the NSIS installer.
   if (state === "downloaded" && info?.version && !isDismissed) {
     return (
       <div

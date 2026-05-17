@@ -1,11 +1,38 @@
 // Auto-update orchestrator. Wraps electron-updater so main.cjs stays focused
 // on window lifecycle. All renderer-facing state is normalised to a single
 // object: { state, info?, error?, progress? } sent on channel "aim:update-status".
+//
+// Platform behaviour:
+//   - Windows: NSIS in-place auto-update. Detect -> auto-download -> banner
+//     "Jetzt aktualisieren" -> quitAndInstall.
+//   - Mac (unsigned): Squirrel.Mac REQUIRES a stable code-signing identity
+//     across versions to apply in-place updates. Ad-hoc signed builds fail
+//     validation because each build's CDHash differs. So on Mac we:
+//       * detect the update (autoDownload=false to skip the wasted ZIP fetch)
+//       * show a banner with "Neue Version herunterladen"
+//       * the button opens the stable DMG URL in the system browser
+//       * user downloads + drags new .app to /Applications manually
+//     Same friction as the initial install. When the app gets a real Apple
+//     Developer ID, flip MAC_IN_PLACE_UPDATE to true and this regresses to
+//     the Windows-style flow.
 
 const path = require("path");
-const { app, dialog, ipcMain, BrowserWindow } = require("electron");
+const { app, dialog, ipcMain, BrowserWindow, shell } = require("electron");
 
 const CHANNEL = "aim:update-status";
+const IS_MAC = process.platform === "darwin";
+
+// Set to true once we have a Developer ID and have re-enabled `hardenedRuntime`
+// + `identity` in package.json's build.mac config.
+const MAC_IN_PLACE_UPDATE = false;
+
+// Stable per-platform download URLs (always resolve to the latest release).
+const DOWNLOAD_URLS = {
+  darwin:
+    "https://github.com/Dr-Sparks/Question-Manager-AIM/releases/latest/download/AIM-Pruefungs-Manager-mac-arm64.dmg",
+  win32:
+    "https://github.com/Dr-Sparks/Question-Manager-AIM/releases/latest/download/AIM-Pruefungs-Manager-win-x64.exe",
+};
 
 let bound = false;
 let updater = null;
@@ -19,8 +46,11 @@ function getUpdater() {
   log.transports.file.resolvePathFn = () =>
     path.join(app.getPath("userData"), "logs", "main.log");
   autoUpdater.logger = log;
-  autoUpdater.autoDownload = true; // start download as soon as available
-  autoUpdater.autoInstallOnAppQuit = false; // we ask the user first
+
+  // Don't auto-download on Mac when we'll just ship the user to the browser.
+  autoUpdater.autoDownload = !IS_MAC || MAC_IN_PLACE_UPDATE;
+  autoUpdater.autoInstallOnAppQuit = false; // we always ask the user first
+
   // In dev, electron-updater needs a feed file to test against. The file is
   // gitignored. Without it, dev sessions just skip the check silently.
   if (!app.isPackaged) {
@@ -43,16 +73,17 @@ function broadcast(payload) {
   }
 }
 
-// Errors that mean "there's no release to update to yet" — benign on fresh
-// installs and before the first release is published. We swallow these so a
-// user opening a brand-new install isn't greeted by a scary red banner.
+// Errors that mean "there's no release to update to yet" or "no internet" —
+// benign noise on fresh installs / offline machines. Swallowed so a user
+// opening a brand-new install isn't greeted by a scary red banner.
 const BENIGN_ERROR_PATTERNS = [
   /no published versions/i,
   /Cannot find latest\.yml/i,
   /HttpError: 404/i,
-  /ENOTFOUND/i,           // offline
+  /ENOTFOUND/i, // offline
   /getaddrinfo ENOTFOUND/i,
   /net::ERR_INTERNET_DISCONNECTED/i,
+  /net::ERR_NETWORK_CHANGED/i, // transient network blip
 ];
 
 function isBenignError(err) {
@@ -77,7 +108,7 @@ function bindUpdaterEvents() {
   );
   au.on("error", (err) => {
     if (isBenignError(err)) {
-      // Still log it via electron-log but don't bother the user.
+      // Still logged via electron-log but the user isn't bothered.
       return;
     }
     broadcast({
@@ -89,6 +120,7 @@ function bindUpdaterEvents() {
 
 function bindIpc() {
   ipcMain.handle("aim:get-version", () => app.getVersion());
+  ipcMain.handle("aim:get-platform", () => process.platform);
 
   ipcMain.handle("aim:check-for-updates", async () => {
     try {
@@ -112,6 +144,19 @@ function bindIpc() {
       });
     }
   });
+
+  // Mac (and any platform we ever fall back) — open the stable DMG/EXE URL
+  // in the system browser so the user can download + replace manually.
+  ipcMain.handle("aim:open-download-url", async () => {
+    const url = DOWNLOAD_URLS[process.platform];
+    if (!url) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 // Public: start a check (used on launch and from the native menu)
@@ -119,7 +164,12 @@ async function checkForUpdates({ silentIfNone = true } = {}) {
   try {
     bindUpdaterEvents();
     const result = await getUpdater().checkForUpdates();
-    if (!silentIfNone && (!result || !result.updateInfo || result.updateInfo.version === app.getVersion())) {
+    if (
+      !silentIfNone &&
+      (!result ||
+        !result.updateInfo ||
+        result.updateInfo.version === app.getVersion())
+    ) {
       dialog.showMessageBox({
         type: "info",
         title: "Keine Aktualisierung",
@@ -129,7 +179,7 @@ async function checkForUpdates({ silentIfNone = true } = {}) {
       });
     }
   } catch (err) {
-    if (!silentIfNone) {
+    if (!silentIfNone && !isBenignError(err)) {
       dialog.showMessageBox({
         type: "error",
         title: "Update-Pruefung fehlgeschlagen",
