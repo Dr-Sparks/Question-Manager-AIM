@@ -5,6 +5,8 @@ import {
   autoSelectQuestions,
   buildExportPayload,
   normalizeSlots,
+  programsForQuestion,
+  shortProgramName,
   validateAssignment,
 } from "./AIMExamManager.helpers.js";
 
@@ -269,4 +271,128 @@ test("buildExportPayload handles questions with empty tags", () => {
     examMeta: sampleExamMeta,
   });
   assert.deepEqual(payload.questions[0].tags, []);
+});
+
+// ── shortProgramName ───────────────────────────────────────────────────────
+
+test("shortProgramName strips trailing parentheticals", () => {
+  assert.equal(shortProgramName("WBS 55 (2020)"), "WBS 55");
+  assert.equal(shortProgramName("WBS Zürich (Gruppe 2)"), "WBS Zürich");
+});
+
+test("shortProgramName leaves clean names untouched", () => {
+  assert.equal(shortProgramName("WBS 55"), "WBS 55");
+});
+
+test("shortProgramName handles empty/missing input", () => {
+  assert.equal(shortProgramName(""), "");
+  assert.equal(shortProgramName(), "");
+});
+
+test("shortProgramName preserves internal parentheticals", () => {
+  // Only the TRAILING parenthetical is stripped — not a paren in the middle.
+  assert.equal(shortProgramName("WBS (Pilot) Bern"), "WBS (Pilot) Bern");
+});
+
+// ── programsForQuestion ────────────────────────────────────────────────────
+
+const programA = {
+  id: "p1",
+  name: "WBS A",
+  semesters: [
+    { sem: 1, modules: [{ course: "Sucht", lecturer: "Dr. Petry", year: "2025" }] },
+  ],
+};
+const programB = {
+  id: "p2",
+  name: "WBS B",
+  semesters: [
+    { sem: 1, modules: [{ course: "Sucht", lecturer: "", year: "" }] },
+  ],
+};
+const programC = {
+  id: "p3",
+  name: "WBS C",
+  semesters: [
+    { sem: 1, modules: [{ course: "Essstörungen", lecturer: "Dr. Mihov", year: "2025" }] },
+  ],
+};
+
+test("programsForQuestion returns empty array when programs is empty/missing", () => {
+  assert.deepEqual(programsForQuestion({ course: "Sucht" }, []), []);
+  assert.deepEqual(programsForQuestion({ course: "Sucht" }), []);
+  assert.deepEqual(programsForQuestion(null, [programA]), []);
+});
+
+test("programsForQuestion exact course+lecturer+year match", () => {
+  const matched = programsForQuestion(
+    { course: "Sucht", lecturer: "Dr. Petry", year: "2025" },
+    [programA, programB, programC]
+  );
+  assert.deepEqual(
+    matched.map((p) => p.id),
+    ["p1", "p2"]
+  );
+});
+
+test("programsForQuestion: blank lecturer on question matches all programs with the course", () => {
+  const matched = programsForQuestion({ course: "Sucht", lecturer: "", year: "" }, [
+    programA,
+    programB,
+    programC,
+  ]);
+  assert.deepEqual(
+    matched.map((p) => p.id),
+    ["p1", "p2"]
+  );
+});
+
+test("programsForQuestion: lecturer mismatch excludes program", () => {
+  const matched = programsForQuestion(
+    { course: "Sucht", lecturer: "Dr. Other", year: "2025" },
+    [programA, programB, programC]
+  );
+  // p1 has lecturer "Dr. Petry" — mismatch → excluded
+  // p2 has blank lecturer → still matches
+  assert.deepEqual(
+    matched.map((p) => p.id),
+    ["p2"]
+  );
+});
+
+test("programsForQuestion: course mismatch excludes all", () => {
+  const matched = programsForQuestion(
+    { course: "Nonexistent" },
+    [programA, programB, programC]
+  );
+  assert.deepEqual(matched, []);
+});
+
+test("programsForQuestion: doesn't double-count when module appears in multiple semesters", () => {
+  const dupProgram = {
+    id: "pdup",
+    name: "WBS Dup",
+    semesters: [
+      { sem: 1, modules: [{ course: "Sucht", lecturer: "", year: "" }] },
+      { sem: 2, modules: [{ course: "Sucht", lecturer: "", year: "" }] },
+    ],
+  };
+  const matched = programsForQuestion({ course: "Sucht" }, [dupProgram]);
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].id, "pdup");
+});
+
+test("programsForQuestion: ignores empty/blank modules", () => {
+  const sparseProgram = {
+    id: "psparse",
+    name: "WBS Sparse",
+    semesters: [
+      { sem: 1, modules: [{ course: "", lecturer: "", year: "" }, { course: "Sucht", lecturer: "", year: "" }] },
+    ],
+  };
+  const matched = programsForQuestion({ course: "Sucht" }, [sparseProgram]);
+  assert.deepEqual(
+    matched.map((p) => p.id),
+    ["psparse"]
+  );
 });

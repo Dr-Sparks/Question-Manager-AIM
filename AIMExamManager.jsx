@@ -201,6 +201,41 @@ function abbreviateCourseName(course=''){
   return shortened || text.slice(0,12);
 }
 
+// Compact form of a Weiterbildungsgang's name for in-row display. Strips
+// trailing parentheticals — "WBS 55 (2020)" → "WBS 55", "WBS Zürich
+// (Gruppe 2)" → "WBS Zürich" — so chips stay readable in narrow cells.
+function shortProgramName(name=''){
+  return String(name||'').replace(/\s*\([^)]*\)\s*$/,'').trim()||String(name||'').trim();
+}
+
+// Return the list of Weiterbildungsgänge whose modules match this question.
+// Uses the SAME rule as the exam builder so the Fragen-DB filter agrees
+// with what Prüfung erstellen produces:
+//   course === module.course
+//   AND (no lecturer on either side, or they match)
+//   AND (no year on either side, or they match)
+// A question with a blank lecturer matches all WBGs that teach the course.
+function programsForQuestion(question,programs){
+  if(!question || !Array.isArray(programs)) return [];
+  const matched=new Map();
+  for(const p of programs){
+    let hit=false;
+    for(const s of (p.semesters||[])){
+      for(const m of (s.modules||[])){
+        if(!m.course) continue;
+        if(m.course!==question.course) continue;
+        if(m.lecturer && question.lecturer && m.lecturer!==question.lecturer) continue;
+        if(m.year && question.year && m.year!==question.year) continue;
+        hit=true;
+        break;
+      }
+      if(hit) break;
+    }
+    if(hit) matched.set(p.id,{id:p.id,name:p.name});
+  }
+  return [...matched.values()];
+}
+
 const emptyModule=()=>({year:'',lecturer:'',course:''});
 const emptySemester=n=>({sem:n,modules:Array.from({length:MODULES_PER_SEMESTER},()=>emptyModule())});
 const createProgram=(id,name,startYear=currentAcademicTag().year,startTerm=currentAcademicTag().term)=>({
@@ -1616,13 +1651,14 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
 // ─── Question DB ──────────────────────────────────────────────────────────────
 const emptyQ=()=>({id:newId('q'),year:'',location:'',lecturer:'',course:'',format:'Single Choice',question:'',optA:'',optB:'',optC:'',optD:'',optE:'',answer:'A'});
 
-function QuestionDB({questions,setQuestions,showToast,showConfirm}){
+function QuestionDB({questions,setQuestions,programs=[],showToast,showConfirm}){
   const[mode,setMode]=useState('list'); // 'list' | 'form'
   const[editing,setEditing]=useState(null);
   const[search,setSearch]=useState('');
   const[filterCourse,setFilterCourse]=useState('');
   const[filterFmt,setFilterFmt]=useState('');
   const[filterLecturer,setFilterLecturer]=useState('');
+  const[filterProgram,setFilterProgram]=useState('');
   const[page,setPage]=useState(0);
   const[pageSize,setPageSize]=useState(15);
   const[editMode,setEditMode]=useState(false);
@@ -1631,13 +1667,28 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
 
   const courses=useMemo(()=>[...new Set(questions.map(q=>q.course))].sort(),[questions]);
   const lecturers=useMemo(()=>[...new Set(questions.map(q=>q.lecturer).filter(Boolean))].sort(),[questions]);
+  // Computed: for each question, which Weiterbildungsgänge does it belong
+  // to? Uses the same matching rule as the exam builder. Recomputed only
+  // when questions or programs change, not on every keystroke.
+  const programsByQuestionId=useMemo(()=>{
+    const map=new Map();
+    questions.forEach(q=>{
+      map.set(q.id,programsForQuestion(q,programs));
+    });
+    return map;
+  },[questions,programs]);
   const filtered=useMemo(()=>questions.filter(q=>{
     const s=search.toLowerCase();
-    return(!s||q.question.toLowerCase().includes(s)||q.course.toLowerCase().includes(s)||q.lecturer.toLowerCase().includes(s))
-      &&(!filterCourse||q.course===filterCourse)
-      &&(!filterFmt||q.format===filterFmt)
-      &&(!filterLecturer||q.lecturer===filterLecturer);
-  }),[questions,search,filterCourse,filterFmt,filterLecturer]);
+    if(s && !(q.question.toLowerCase().includes(s)||q.course.toLowerCase().includes(s)||q.lecturer.toLowerCase().includes(s))) return false;
+    if(filterCourse && q.course!==filterCourse) return false;
+    if(filterFmt && q.format!==filterFmt) return false;
+    if(filterLecturer && q.lecturer!==filterLecturer) return false;
+    if(filterProgram){
+      const list=programsByQuestionId.get(q.id)||[];
+      if(!list.some(p=>String(p.id)===String(filterProgram))) return false;
+    }
+    return true;
+  }),[questions,search,filterCourse,filterFmt,filterLecturer,filterProgram,programsByQuestionId]);
   const paged=pageSize==='all'?filtered:filtered.slice(page*pageSize,(page+1)*pageSize);
 
   useEffect(()=>{setPage(0);},[pageSize]);
@@ -1729,6 +1780,21 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
           <Field label="Erstellungsjahr" half><input style={inp} value={editing.year} onChange={e=>upd('year')(e.target.value)} placeholder="2025"/></Field>
           <Field label="Standort" half><input style={inp} value={editing.location} onChange={e=>upd('location')(e.target.value)} placeholder="Bern / Zürich …"/></Field>
         </div>
+        {/* Live indicator: which Weiterbildungsgänge will this question appear in based on the current course/lecturer? Updates as user types. */}
+        {(() => {
+          const matched=programsForQuestion(editing,programs);
+          return(
+            <div style={{background:'var(--c-wW)',border:'1px solid var(--c-bo)',borderRadius:6,padding:'8px 12px',marginBottom:14,fontSize:'12px',color:'var(--c-tx)'}}>
+              <span style={{color:'var(--c-mu)',marginRight:6}}>Erscheint in:</span>
+              {matched.length===0
+                ?<span style={{fontStyle:'italic',color:'var(--c-mu)'}}>keinem aktuellen Weiterbildungsgang (Kurs oder Dozent/in passt zu keinem Modul)</span>
+                :<span style={{display:'inline-flex',flexWrap:'wrap',gap:6,verticalAlign:'middle'}}>
+                  {matched.map(p=><Badge key={p.id} ch={shortProgramName(p.name)} color="gray" sm/>)}
+                </span>
+              }
+            </div>
+          );
+        })()}
         <Field label="Format *">
           <select style={{...inp,width:'auto'}} value={editing.format} onChange={e=>{const f=e.target.value;upd('format')(f);if(f==='Richtig/Falsch'){upd('optA')('Richtig');upd('optB')('Falsch');upd('optC')('');upd('optD')('');upd('optE')('');setEditing(prev=>({...prev,format:f,optA:'Richtig',optB:'Falsch',optC:'',optD:'',optE:'',answer:'A'}));}else if(f==='Ja/Nein'){setEditing(prev=>({...prev,format:f,optA:'Ja',optB:'Nein',optC:'',optD:'',optE:'',answer:'A'}));}else setEditing(prev=>({...prev,format:f}));}}>
             {FORMATS.map(f=><option key={f}>{f}</option>)}
@@ -1820,6 +1886,10 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
           <select style={{...inp,width:190}} value={filterLecturer} onChange={e=>{setFilterLecturer(e.target.value);setPage(0);}}>
             <option value="">Alle Dozenten</option>{lecturers.map(l=><option key={l}>{l}</option>)}
           </select>
+          <select style={{...inp,width:220}} value={filterProgram} onChange={e=>{setFilterProgram(e.target.value);setPage(0);}}>
+            <option value="">Alle Weiterbildungsgänge</option>
+            {programs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
           <select style={{...inp,width:150}} value={filterFmt} onChange={e=>{setFilterFmt(e.target.value);setPage(0);}}>
             <option value="">Alle Formate</option>{FORMATS.map(f=><option key={f}>{f}</option>)}
           </select>
@@ -1829,7 +1899,7 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
             <option value={50}>50 pro Seite</option>
             <option value="all">Alle Fragen</option>
           </select>
-          {(search||filterCourse||filterFmt||filterLecturer)&&<Btn ch="✕ Reset" onClick={()=>{setSearch('');setFilterCourse('');setFilterFmt('');setFilterLecturer('');setPage(0);}} v="ghost" sm/>}
+          {(search||filterCourse||filterFmt||filterLecturer||filterProgram)&&<Btn ch="✕ Reset" onClick={()=>{setSearch('');setFilterCourse('');setFilterFmt('');setFilterLecturer('');setFilterProgram('');setPage(0);}} v="ghost" sm/>}
           <span style={{fontSize:'12px',color:'var(--c-mu)',alignSelf:'center',marginLeft:'auto'}}>{filtered.length} Treffer</span>
         </div>
       )}
@@ -1838,22 +1908,34 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
         <table style={{width:'100%',borderCollapse:'collapse'}}>
           <thead>
             <tr style={{background:'#111111'}}>
-              {['#','Kurs','Dozent/in','Format','Frage','Antwort',...(editMode?['']:[''])].map(h=>(
+              {['#','Kurs','Dozent/in','Weiterbildungsgänge','Format','Frage','Antwort',...(editMode?['']:[''])].map(h=>(
                 <th key={h} style={{padding:'9px 12px',textAlign:'left',fontSize:'11px',fontWeight:500,color:'#f3dcc9',letterSpacing:'0.5px',whiteSpace:'nowrap'}}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {paged.length===0&&<tr><td colSpan={7} style={{padding:32,textAlign:'center',color:'var(--c-mu)',fontSize:'14px'}}>{questions.length===0?<span>Noch keine Fragen — klicke <strong>✏️ Bearbeiten</strong> dann <strong>+ Neue Frage</strong>.</span>:'Keine Treffer. Filter anpassen oder zurücksetzen.'}</td></tr>}
-            {paged.map((q,i)=>(
+            {paged.length===0&&<tr><td colSpan={8} style={{padding:32,textAlign:'center',color:'var(--c-mu)',fontSize:'14px'}}>{questions.length===0?<span>Noch keine Fragen — klicke <strong>✏️ Bearbeiten</strong> dann <strong>+ Neue Frage</strong>.</span>:'Keine Treffer. Filter anpassen oder zurücksetzen.'}</td></tr>}
+            {paged.map((q,i)=>{
+              const matchedPrograms=programsByQuestionId.get(q.id)||[];
+              return(
               <React.Fragment key={q.id}>
                 {i>0&&q.course!==paged[i-1].course&&(
-                  <tr><td colSpan={7} style={{padding:0,height:2,background:'rgba(0,0,0,0.07)'}}></td></tr>
+                  <tr><td colSpan={8} style={{padding:0,height:2,background:'rgba(0,0,0,0.07)'}}></td></tr>
                 )}
               <tr style={{borderBottom:'1px solid var(--c-bo)',background:i%2===0?'var(--c-wh)':'var(--c-wW)'}}>
                 <td style={{padding:'8px 12px',fontSize:'12px',color:'var(--c-mu)',width:36}}>{q.id}</td>
                 <td style={{padding:'8px 12px',fontSize:'12px',maxWidth:160}}><div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--c-tD)',fontWeight:500}}>{q.course}</div><div style={{fontSize:'11px',color:'var(--c-mu)'}}>{q.year||'–'}</div></td>
                 <td style={{padding:'8px 12px',fontSize:'12px',color:'var(--c-tx)',maxWidth:140}}><div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{q.lecturer||'–'}</div></td>
+                <td style={{padding:'8px 12px',maxWidth:180}}>
+                  {matchedPrograms.length===0
+                    ?<span style={{fontSize:'11px',color:'var(--c-mu)',fontStyle:'italic'}} title="Diese Frage erscheint in keinem aktuellen Weiterbildungsgang. Kurs oder Dozent/in passt zu keinem Modul.">— keiner</span>
+                    :<div style={{display:'flex',flexWrap:'wrap',gap:4}} title={matchedPrograms.map(p=>p.name).join(', ')}>
+                      {matchedPrograms.map(p=>(
+                        <Badge key={p.id} ch={shortProgramName(p.name)} color="gray" sm/>
+                      ))}
+                    </div>
+                  }
+                </td>
                 <td style={{padding:'8px 12px'}}><Badge ch={q.format} color={q.format==='Multiple Choice'?'warm':q.format==='Richtig/Falsch'?'gray':'teal'} sm/></td>
                 <td style={{padding:'8px 12px',fontSize:'12px',color:'var(--c-tx)',maxWidth:300}}><div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{q.question}</div></td>
                 <td style={{padding:'8px 12px',fontSize:'12px',fontWeight:600,color:'var(--c-gr)'}}>{q.answer}</td>
@@ -1865,7 +1947,8 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
                 </td>
               </tr>
               </React.Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -3638,7 +3721,7 @@ export default function AIMExamManager(){
       <Sidebar view={view} setView={navTo} qCount={questions.length} pCount={programs.length} examCount={exam?.length} collapsed={sidebarCollapsed} onToggle={toggleSidebar} darkMode={darkMode} onToggleDark={()=>setDarkMode(d=>!d)} lastSavedAt={lastSavedAt}/>
       <div style={{flex:1,overflow:'auto'}}>
         {view==='dashboard'&&<Dashboard questions={questions} programs={programs} exam={exam} examName={examName} savedExams={savedExams} setView={navTo} setQuestions={setQuestions} setPrograms={setPrograms} setSavedExams={setSavedExams} setExam={setExam} setExamName={setExamName} showToast={showToast} showConfirm={showConfirm} onClearAllData={clearAllData} saveLastBackup={saveLastBackup}/>}
-        {view==='questions'&&<QuestionDB questions={questions} setQuestions={setQuestions} showToast={showToast} showConfirm={showConfirm}/>}
+        {view==='questions'&&<QuestionDB questions={questions} setQuestions={setQuestions} programs={programs} showToast={showToast} showConfirm={showConfirm}/>}
         {view==='programs'&&<Programs programs={programs} setPrograms={setPrograms} questions={questions} showToast={showToast} showConfirm={showConfirm} settings={settings}/>}
         {view==='exam'&&<ExamBuilder programs={programs} questions={questions} setView={navTo} onBuild={(qs,name)=>{setExam(qs);setExamName(name||'');showToast(`Prüfung „${name}“ mit ${qs.length} Fragen erstellt.`,'success');setView('export');}}/>}
         {view==='export'&&<ExportView exam={exam} programName={examName} setView={navTo} showToast={showToast} showConfirm={showConfirm} onSaveAndNew={(savedName)=>{if(!exam?.length)return;const snapshot=createSavedExamSnapshot(exam,savedName||examName||'Prüfung',examName||'Prüfung');setSavedExams(prev=>[snapshot,...prev]);setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}showToast(`Prüfung „${snapshot.name}“ gespeichert. Neue Prüfung kann gestartet werden.`,'success');setView('exam');}} onUpdateExam={updater=>setExam(prev=>typeof updater==='function'?updater(prev||[]):updater)} onClear={()=>{setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}}}/>}

@@ -4,6 +4,30 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.9] — 2026-05-17
+
+### Hinzugefügt
+- **Weiterbildungsgang-Filter in der Fragen Datenbank**: Neues Dropdown
+  „Alle Weiterbildungsgänge" zwischen „Alle Dozenten" und „Alle Formate".
+  Bei Auswahl werden nur Fragen angezeigt, die zu mindestens einem Modul
+  des gewählten Weiterbildungsgangs passen.
+- **Neue Spalte „Weiterbildungsgänge"** in der Fragen-Tabelle zwischen
+  Dozent/in und Format. Zeigt für jede Frage die zugeordneten Weiterbildungs-
+  gänge als kleine graue Badges (gekürzte Namen ohne Klammerzusatz).
+- **Live-Anzeige im Frage-Bearbeiten-Formular**: Unter den Kursfeldern
+  steht „Erscheint in: …" — aktualisiert sich live während des Tippens,
+  zeigt sofort, welche Weiterbildungsgänge die Frage erfassen wird.
+
+### Technisch
+- Beziehung Frage ↔ Weiterbildungsgang ist **berechnet** (nicht gespeichert).
+  Selbst-aktualisierend bei jeder Kurs-/Dozent-Änderung, kein Migration-
+  Risiko, kein Datendrift. Backups (JSON/Excel) bleiben formatkompatibel.
+- Matching-Regel identisch zur „Prüfung erstellen"-Logik: gleicher Kurs,
+  Dozent matched falls beide gesetzt, Jahr matched falls beide gesetzt.
+  Beide Views sind by construction konsistent.
+- Neue Helper `programsForQuestion` + `shortProgramName` in
+  `AIMExamManager.helpers.js` mit 11 zusätzlichen Unit-Tests (31 total).
+
 ## [1.0.8] — 2026-05-17
 
 ### Behoben

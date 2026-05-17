@@ -32,6 +32,43 @@ export function autoSelectQuestions(questions, selectedModuleIds) {
     });
 }
 
+// Compact form of a Weiterbildungsgang's name for in-row display. Mirrors
+// the inline helper of the same shape in AIMExamManager.jsx.
+export function shortProgramName(name = "") {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\s*\([^)]*\)\s*$/, "").trim() || trimmed;
+}
+
+// Reference implementation of the "which Weiterbildungsgänge does this
+// question belong to" computation. Same matching rule as the exam builder:
+//   course === module.course
+//   AND (no lecturer on either side, or they match)
+//   AND (no year on either side, or they match)
+// The monolith's version of this function in AIMExamManager.jsx must stay
+// in lock-step with this one — the tests in AIMExamManager.helpers.test.js
+// pin the contract.
+export function programsForQuestion(question, programs) {
+  if (!question || !Array.isArray(programs)) return [];
+  const matched = new Map();
+  for (const p of programs) {
+    let hit = false;
+    for (const s of p.semesters || []) {
+      for (const m of s.modules || []) {
+        if (!m.course) continue;
+        if (m.course !== question.course) continue;
+        if (m.lecturer && question.lecturer && m.lecturer !== question.lecturer) continue;
+        if (m.year && question.year && m.year !== question.year) continue;
+        hit = true;
+        break;
+      }
+      if (hit) break;
+    }
+    if (hit) matched.set(p.id, { id: p.id, name: p.name });
+  }
+  return [...matched.values()];
+}
+
 export function buildExportPayload({
   weiterbildungsgang,
   selectedAssignments,
