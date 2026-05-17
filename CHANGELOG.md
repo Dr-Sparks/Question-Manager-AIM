@@ -4,6 +4,29 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.11] — 2026-05-18
+
+### Verändert
+- „Über die App"-Tour-Szenen verwenden jetzt die **echten UI-Komponenten**
+  aus dem Monolith. `Btn`, `Badge`, `Field`, der Eingabe-Stil `inp`, die
+  Semestermatrix-Tokens (`gridCell`, `gridSubHead`, `gridSemesterHead`,
+  `gridStickyName`, …) sowie Konstanten (`FORMATS`, `SEMESTER_COUNT`,
+  `abbreviateCourseName`) werden nun von `AIMExamManager.jsx` exportiert
+  und in `AboutPage.jsx` wiederverwendet. Die Mini-Mockups sind dadurch
+  **pixelgenau identisch** zu den realen Screens — kein Drift mehr zwischen
+  Tour und echtem App-UI.
+- Animationen (Cursor, getipptes Zeichen-für-Zeichen, Toast-Slide-in,
+  Datei-fly-down) bleiben gleich. Sie steuern jetzt die echten Komponenten
+  per kontrolliertem State („Marionetten-Strings" am echten UI) statt
+  hand-gemalter Annäherungen.
+
+### Technisch
+- Neue Named-Exports in `AIMExamManager.jsx` (keine Verhaltensänderung,
+  nur `export`-Keywords).
+- Zirkuläre Imports sind ESM-sicher, weil `AboutPage` die Imports nur
+  innerhalb von Funktions-Rümpfen verwendet (Render-Time), nicht beim
+  Modul-Laden.
+
 ## [1.0.10] — 2026-05-18
 
 ### Hinzugefügt

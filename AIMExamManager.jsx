@@ -4,7 +4,11 @@ import JSZip from "jszip";
 import AboutPage from "./src/AboutPage.jsx";
 
 // Color tokens — values come from CSS custom properties so dark/light mode works
-const C={tD:'var(--c-tD)',t:'var(--c-t)',tM:'var(--c-tM)',tL:'var(--c-tL)',tP:'var(--c-tP)',wW:'var(--c-wW)',st:'var(--c-st)',tx:'var(--c-tx)',mu:'var(--c-mu)',bo:'var(--c-bo)',ac:'var(--c-ac)',wh:'var(--c-wh)',re:'var(--c-re)',rP:'var(--c-rP)',gr:'var(--c-gr)',gP:'var(--c-gP)'};
+// Exported for re-use by src/AboutPage.jsx (tour scenes need pixel-identical
+// styling and primitives). The circular import (this file imports AboutPage,
+// AboutPage imports back from here) is safe because AboutPage only uses these
+// inside function bodies, not at module evaluation time.
+export const C={tD:'var(--c-tD)',t:'var(--c-t)',tM:'var(--c-tM)',tL:'var(--c-tL)',tP:'var(--c-tP)',wW:'var(--c-wW)',st:'var(--c-st)',tx:'var(--c-tx)',mu:'var(--c-mu)',bo:'var(--c-bo)',ac:'var(--c-ac)',wh:'var(--c-wh)',re:'var(--c-re)',rP:'var(--c-rP)',gr:'var(--c-gr)',gP:'var(--c-gP)'};
 const THEMES={
   light:`
     --c-tD:#111111;--c-t:#d71920;--c-tM:#f08a00;--c-tL:#f3dcc9;--c-tP:#fff5ee;
@@ -21,13 +25,13 @@ const THEMES={
     --c-sem-cur:#1e1c10;--c-sem-comp:#1e1e24;--c-row-alt:#1c1c1e;
     --c-grid-sub:#1c1c20;--c-grid-border:#444448;--c-sidebar:#0d0d10;`
 };
-const sans="'Source Sans 3',system-ui,sans-serif";
-const serif="'Libre Baskerville',Georgia,serif";
-const FORMATS=['Single Choice','Multiple Choice','Richtig/Falsch','Ja/Nein'];
+export const sans="'Source Sans 3',system-ui,sans-serif";
+export const serif="'Libre Baskerville',Georgia,serif";
+export const FORMATS=['Single Choice','Multiple Choice','Richtig/Falsch','Ja/Nein'];
 const KEYS=['A','B','C','D','E'];
 const TERM_OPTIONS=['FS','HS'];
-const SEMESTER_COUNT=6;
-const MODULES_PER_SEMESTER=4;
+export const SEMESTER_COUNT=6;
+export const MODULES_PER_SEMESTER=4;
 
 // Unified ID generator. Replaces a previously-mixed scheme of Date.now(),
 // Date.now()+Math.random() (which produced floats that lose precision in
@@ -178,7 +182,7 @@ const currentAcademicTag=()=>{
   return{year:String(now.getFullYear()),term:now.getMonth()+1>=8?'HS':'FS'};
 };
 
-function abbreviateCourseName(course=''){
+export function abbreviateCourseName(course=''){
   const text=String(course||'').trim();
   if(!text) return '';
   const normalized=text
@@ -853,14 +857,14 @@ function printAsPdf(qs,title){
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
-const inp={width:'100%',fontFamily:sans,fontSize:'14px',padding:'8px 12px',border:'1px solid var(--c-bo)',borderRadius:4,background:'var(--c-wh)',color:'var(--c-tx)',boxSizing:'border-box',outline:'none'};
-const gridTh={padding:'10px 8px',border:'1px solid var(--c-grid-border)',background:'var(--c-wh)',color:'var(--c-tx)',fontSize:'11px',fontWeight:700,textAlign:'center',whiteSpace:'nowrap'};
-const gridSemesterHead={padding:'10px 8px',borderTop:'1px solid var(--c-grid-border)',borderBottom:'1px solid var(--c-grid-border)',borderRight:'1px solid var(--c-grid-border)',background:'var(--c-wh)',color:'var(--c-tx)',fontSize:'13px',fontWeight:700,textAlign:'center'};
-const gridSubHead={padding:'8px 6px',borderBottom:'1px solid var(--c-grid-border)',borderRight:'1px solid var(--c-bo)',background:'var(--c-grid-sub)',color:'var(--c-tx)',fontSize:'10px',fontWeight:600,textAlign:'center',whiteSpace:'nowrap'};
-const gridCell={padding:'6px',borderRight:'1px solid var(--c-bo)',borderBottom:'1px solid var(--c-bo)',verticalAlign:'top'};
-const gridCellMuted={padding:'10px 8px',borderRight:'1px solid var(--c-bo)',borderBottom:'1px solid var(--c-bo)',fontSize:'12px',color:'var(--c-mu)',verticalAlign:'top',textAlign:'center'};
-const gridStickyName={padding:'8px',borderRight:'1px solid var(--c-grid-border)',borderBottom:'1px solid var(--c-bo)',verticalAlign:'top'};
-const gridInput={...inp,fontSize:'12px',padding:'6px 8px',borderRadius:0,background:'transparent',border:'1px solid transparent',transition:'border-color 0.15s'};
+export const inp={width:'100%',fontFamily:sans,fontSize:'14px',padding:'8px 12px',border:'1px solid var(--c-bo)',borderRadius:4,background:'var(--c-wh)',color:'var(--c-tx)',boxSizing:'border-box',outline:'none'};
+export const gridTh={padding:'10px 8px',border:'1px solid var(--c-grid-border)',background:'var(--c-wh)',color:'var(--c-tx)',fontSize:'11px',fontWeight:700,textAlign:'center',whiteSpace:'nowrap'};
+export const gridSemesterHead={padding:'10px 8px',borderTop:'1px solid var(--c-grid-border)',borderBottom:'1px solid var(--c-grid-border)',borderRight:'1px solid var(--c-grid-border)',background:'var(--c-wh)',color:'var(--c-tx)',fontSize:'13px',fontWeight:700,textAlign:'center'};
+export const gridSubHead={padding:'8px 6px',borderBottom:'1px solid var(--c-grid-border)',borderRight:'1px solid var(--c-bo)',background:'var(--c-grid-sub)',color:'var(--c-tx)',fontSize:'10px',fontWeight:600,textAlign:'center',whiteSpace:'nowrap'};
+export const gridCell={padding:'6px',borderRight:'1px solid var(--c-bo)',borderBottom:'1px solid var(--c-bo)',verticalAlign:'top'};
+export const gridCellMuted={padding:'10px 8px',borderRight:'1px solid var(--c-bo)',borderBottom:'1px solid var(--c-bo)',fontSize:'12px',color:'var(--c-mu)',verticalAlign:'top',textAlign:'center'};
+export const gridStickyName={padding:'8px',borderRight:'1px solid var(--c-grid-border)',borderBottom:'1px solid var(--c-bo)',verticalAlign:'top'};
+export const gridInput={...inp,fontSize:'12px',padding:'6px 8px',borderRadius:0,background:'transparent',border:'1px solid transparent',transition:'border-color 0.15s'};
 // Focus style applied via onFocus/onBlur in inputs
 
 function getSemesterState(program,semNumber){
@@ -900,7 +904,7 @@ function getModuleSelectionKey(programId,sem,moduleIndex,module){
   return `${programId}:${sem}:${moduleIndex}:${module.year||''}:${module.lecturer||''}:${module.course||''}`;
 }
 
-function Field({label,children,half}){
+export function Field({label,children,half}){
   return(
     <div style={{marginBottom:12,flex:half?'1':undefined,minWidth:half?'45%':undefined}}>
       {label&&<label style={{display:'block',fontSize:'11px',fontWeight:500,color:C.mu,marginBottom:4,letterSpacing:'0.5px',textTransform:'uppercase'}}>{label}</label>}
@@ -909,13 +913,13 @@ function Field({label,children,half}){
   );
 }
 
-function Btn({ch,onClick,v='primary',sm,dis,full,style:s={},autoFocus,title}){
+export function Btn({ch,onClick,v='primary',sm,dis,full,style:s={},autoFocus,title}){
   const base={fontFamily:sans,fontWeight:500,cursor:dis?'not-allowed':'pointer',border:'none',borderRadius:4,padding:sm?'6px 14px':'9px 20px',fontSize:sm?'12px':'14px',opacity:dis?.55:1,width:full?'100%':undefined,...s};
   const vs={primary:{background:C.t,color:C.wh},secondary:{background:'transparent',color:C.t,border:`1.5px solid ${C.t}`},ghost:{background:'transparent',color:C.mu,border:`1px solid ${C.bo}`},danger:{background:C.re,color:C.wh},accent:{background:C.ac,color:C.wh},success:{background:C.gr,color:C.wh}};
   return<button type="button" autoFocus={autoFocus} title={title} onClick={dis?undefined:onClick} style={{...base,...(vs[v]||vs.primary)}}>{ch}</button>;
 }
 
-function Badge({ch,color='teal',sm}){
+export function Badge({ch,color='teal',sm}){
   const colors={teal:{bg:C.tP,tx:C.tD},warm:{bg:'#FEF3E2',tx:'#7A4F10'},gray:{bg:C.st,tx:'#4A4A48'},green:{bg:C.gP,tx:C.gr},red:{bg:C.rP,tx:C.re}};
   const co=colors[color]||colors.teal;
   return<span style={{background:co.bg,color:co.tx,fontSize:sm?'10px':'11px',fontWeight:500,padding:sm?'2px 7px':'3px 10px',borderRadius:20,whiteSpace:'nowrap'}}>{ch}</span>;
@@ -966,7 +970,7 @@ function ConfirmModal({confirm,onClose}){
   );
 }
 
-function SectionHeader({title,sub,action}){
+export function SectionHeader({title,sub,action}){
   return(
     <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:20}}>
       <div>
@@ -2059,10 +2063,10 @@ function CourseAutocomplete({value,onChange,courses,locked,placeholder,questions
   );
 }
 
-const NR_W=44;const WBG_W=260;const YR_W=72;const LE_W=150;const CO_W=200;
-const stickyCell={position:'sticky',zIndex:3};
-const stickyNr={...stickyCell,left:0};
-const stickyWbg={...stickyCell,left:NR_W};
+export const NR_W=44;export const WBG_W=260;export const YR_W=72;export const LE_W=150;export const CO_W=200;
+export const stickyCell={position:'sticky',zIndex:3};
+export const stickyNr={...stickyCell,left:0};
+export const stickyWbg={...stickyCell,left:NR_W};
 
 // HOISTED out of SemesterMatrix. Previously this was declared inside the
 // parent's render, which meant React saw a new component type on every
