@@ -1,7 +1,7 @@
 {
   "name": "aim-pruefungs-manager",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AIM Pruefungs-Manager als Desktop-App",
   "author": "Dr-Sparks",
   "license": "UNLICENSED",
@@ -74,11 +74,15 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "icon": "build/icons/icon.icns",
@@ -95,15 +99,26 @@
         "height": 380
       },
       "contents": [
-        { "x": 140, "y": 200, "type": "file" },
-        { "x": 400, "y": 200, "type": "link", "path": "/Applications" }
+        {
+          "x": 140,
+          "y": 200,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icons/icon.ico"
