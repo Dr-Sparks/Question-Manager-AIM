@@ -4,6 +4,35 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.12] — 2026-05-18
+
+### Verändert
+- „Über die App"-Tour zeigt jetzt für **jede App-Seite** den echten,
+  vollständigen Bildschirm — gerendert aus den realen Komponenten
+  (`Dashboard`, `QuestionDB`, `Programs`, `ExamBuilder`, `ExportView`,
+  `SettingsPage`), eingebettet im Tour-Card mit `pointer-events: none`
+  und auf passende Größe skaliert. Kein Mockup, kein Screenshot — der
+  Benutzer sieht im Tour exakt das, was er auf der echten Seite sehen
+  wird.
+- Über jedem Bildschirm wandert ein animierter Cursor mit Sprechblasen,
+  der nacheinander jede wichtige Stelle erklärt. Sprechblasen wechseln
+  alle ~4 Sekunden und loopen automatisch.
+- Sechs Sektionen statt der bisherigen fünf — eine pro Hauptseite der
+  App: Dashboard, Fragen Datenbank, Weiterbildungsgänge, Prüfung
+  erstellen, Export & Download, Einstellungen.
+
+### Technisch
+- Neue Named-Exports für `Dashboard`, `QuestionDB`, `Programs`,
+  `ExamBuilder`, `ExportView`, `SettingsPage` in AIMExamManager.jsx
+  (keine Verhaltensänderung, nur `export`-Keywords).
+- AboutPage.jsx hat einen `PageStage`-Wrapper, der die Seite mit
+  `transform: scale(…)` skaliert und einen Overlay für Cursor und
+  Sprechblasen bietet. Klicks sind deaktiviert, damit der Tour-Modus
+  niemals echte Aktionen auslöst.
+- Deterministische Mock-Daten (6 Fragen, 2 Weiterbildungsgänge, 1
+  laufende Prüfung, 1 gespeicherte Prüfung) füllen die gerenderten
+  Seiten.
+
 ## [1.0.11] — 2026-05-18
 
 ### Verändert

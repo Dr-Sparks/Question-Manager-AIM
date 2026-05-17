@@ -1394,7 +1394,7 @@ function SaveIndicator({lastSavedAt}){
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
-function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuestions,setPrograms,setSavedExams,setExam,setExamName,showToast,showConfirm,onClearAllData,saveLastBackup}){
+export function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuestions,setPrograms,setSavedExams,setExam,setExamName,showToast,showConfirm,onClearAllData,saveLastBackup}){
   const restoreRef=useRef(null);
   const excelImportRef=useRef(null);
   // Tick to force re-read of aim_last_backup when destructive ops run.
@@ -1657,7 +1657,7 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
 // ─── Question DB ──────────────────────────────────────────────────────────────
 const emptyQ=()=>({id:newId('q'),year:'',location:'',lecturer:'',course:'',format:'Single Choice',question:'',optA:'',optB:'',optC:'',optD:'',optE:'',answer:'A'});
 
-function QuestionDB({questions,setQuestions,programs=[],showToast,showConfirm}){
+export function QuestionDB({questions,setQuestions,programs=[],showToast,showConfirm}){
   const[mode,setMode]=useState('list'); // 'list' | 'form'
   const[editing,setEditing]=useState(null);
   const[search,setSearch]=useState('');
@@ -2252,7 +2252,7 @@ function SemesterMatrix({programs,questions,mode='manage',onProgramsChange,selec
 
 // ─── Programs ─────────────────────────────────────────────────────────────────
 const SCALE_STEPS=[100,85,70,55];
-function Programs({programs,setPrograms,questions,showToast,showConfirm,settings}){
+export function Programs({programs,setPrograms,questions,showToast,showConfirm,settings}){
   const[adding,setAdding]=useState(false);
   const[newName,setNewName]=useState('');
   const[newStartYear,setNewStartYear]=useState(currentAcademicTag().year);
@@ -2328,7 +2328,7 @@ function Programs({programs,setPrograms,questions,showToast,showConfirm,settings
 }
 
 // ─── Exam Builder ─────────────────────────────────────────────────────────────
-function ExamBuilder({programs,questions,onBuild,setView}){
+export function ExamBuilder({programs,questions,onBuild,setView}){
   const[selectedProgramId,setSelectedProgramId]=useState(null);
   const[selectedModuleKeys,setSelectedModuleKeys]=useState(new Set());
   const[built,setBuilt]=useState(false);
@@ -2442,7 +2442,7 @@ function ExamBuilder({programs,questions,onBuild,setView}){
 }
 
 // ─── Export View ──────────────────────────────────────────────────────────────
-function ExportView({exam,programName,setView,showToast,showConfirm,onSaveAndNew,onUpdateExam,onClear}){
+export function ExportView({exam,programName,setView,showToast,showConfirm,onSaveAndNew,onUpdateExam,onClear}){
   const[copied,setCopied]=useState(false);
   const[editMode,setEditMode]=useState(false);
   // null = dialog closed; string = current input value
@@ -2579,7 +2579,7 @@ function ExportView({exam,programName,setView,showToast,showConfirm,onSaveAndNew
 }
 
 // ─── Settings Page ───────────────────────────────────────────────────────────
-function SettingsPage({settings,setSettings,darkMode,onToggleDark}){
+export function SettingsPage({settings,setSettings,darkMode,onToggleDark}){
   return(
     <div style={{padding:28,maxWidth:680}}>
       <SectionHeader title="Einstellungen" sub="Standardverhalten und Darstellung"/>
