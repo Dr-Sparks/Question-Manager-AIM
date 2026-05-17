@@ -1,16 +1,28 @@
 # AIM Prüfungs-Manager
 
+[![Latest Release](https://img.shields.io/github/v/release/Dr-Sparks/Question-Manager-AIM?label=Version&style=for-the-badge)](https://github.com/Dr-Sparks/Question-Manager-AIM/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Dr-Sparks/Question-Manager-AIM/total?style=for-the-badge)](https://github.com/Dr-Sparks/Question-Manager-AIM/releases)
+
 Der AIM Prüfungs-Manager hilft dabei, Fragen zu verwalten, Weiterbildungsgänge pro Semester abzubilden, Prüfungen zusammenzustellen, Prüfungen zu speichern und Backups zu importieren oder zu exportieren.
+
+## ⬇️ Download
+
+Direkt-Downloads der neuesten Version — ein Klick, immer aktuell:
+
+| Plattform | Datei | Download |
+|---|---|---|
+| 🍎 **Mac** (Apple Silicon) | `.dmg` | [**Download für Mac**](https://github.com/Dr-Sparks/Question-Manager-AIM/releases/latest/download/AIM-Pruefungs-Manager-mac-arm64.dmg) |
+| 🪟 **Windows** (64-bit) | `.exe` | [**Download für Windows**](https://github.com/Dr-Sparks/Question-Manager-AIM/releases/latest/download/AIM-Pruefungs-Manager-win-x64.exe) |
+
+Diese Links zeigen immer auf die aktuellste veröffentlichte Version. Sie sind permanent gültig und müssen nicht aktualisiert werden, wenn eine neue Version erscheint.
+
+→ Alle Versionen & Release-Notes: [Releases-Seite](https://github.com/Dr-Sparks/Question-Manager-AIM/releases)
 
 ## Installation
 
-Die fertige App ist auf der Releases-Seite erhältlich:
-
-👉 [github.com/Dr-Sparks/Question-Manager-AIM/releases/latest](https://github.com/Dr-Sparks/Question-Manager-AIM/releases/latest)
-
 ### Mac (Apple Silicon — M1, M2, M3, M4)
 
-1. `AIM Pruefungs-Manager-<Version>-mac-arm64.dmg` herunterladen
+1. `AIM-Pruefungs-Manager-mac-arm64.dmg` herunterladen (siehe Download-Tabelle oben)
 2. Doppelklick auf die heruntergeladene Datei
 3. Im sich öffnenden Fenster das App-Symbol auf den `Applications`-Ordner ziehen
 4. App im Programme-Ordner öffnen
@@ -26,7 +38,7 @@ Das ist nur beim allerersten Start nötig. Danach öffnet sich die App per Doppe
 
 ### Windows
 
-1. `AIM Pruefungs-Manager-<Version>-win-x64.exe` herunterladen
+1. `AIM-Pruefungs-Manager-win-x64.exe` herunterladen (siehe Download-Tabelle oben)
 2. Doppelklick auf die heruntergeladene Datei
 3. Falls Windows Defender SmartScreen warnt: `Weitere Informationen` → `Trotzdem ausführen`
 4. Installationsassistenten durchklicken

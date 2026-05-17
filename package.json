@@ -60,7 +60,7 @@
     "extraMetadata": {
       "main": "electron/main.cjs"
     },
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "artifactName": "${productName}-${os}-${arch}.${ext}",
     "publish": [
       {
         "provider": "github",
