@@ -61,6 +61,7 @@
       "main": "electron/main.cjs"
     },
     "artifactName": "${productName}-${os}-${arch}.${ext}",
+    "afterPack": "./build/afterPack.cjs",
     "publish": [
       {
         "provider": "github",
@@ -86,10 +87,11 @@
         }
       ],
       "icon": "build/icons/icon.icns",
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "identity": null,
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "electronUpdaterCompatibility": ">=2.16"
     },
     "dmg": {
       "title": "AIM Pruefungs-Manager",
