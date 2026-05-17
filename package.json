@@ -55,6 +55,10 @@
       {
         "from": "AIM_Leervorlage.xlsx",
         "to": "AIM_Leervorlage.xlsx"
+      },
+      {
+        "from": "CHANGELOG.md",
+        "to": "CHANGELOG.md"
       }
     ],
     "extraMetadata": {

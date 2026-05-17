@@ -79,7 +79,21 @@ export default class ErrorBoundary extends React.Component {
       `AIM_Notfall-Sicherung_${stamp}.json`
     );
     this.setState({ exported: ok });
+    if (ok) {
+      // Re-arm after 3s so a second click (e.g. saving to a second location)
+      // gives visible feedback. setState on unmounted is a noop; the boundary
+      // stays mounted until reload anyway.
+      if (this._resetTimer) clearTimeout(this._resetTimer);
+      this._resetTimer = setTimeout(
+        () => this.setState({ exported: false }),
+        3000
+      );
+    }
   };
+
+  componentWillUnmount() {
+    if (this._resetTimer) clearTimeout(this._resetTimer);
+  }
 
   handleReload = () => {
     try {

@@ -1,22 +1,76 @@
 // Native German application menu. On macOS the first menu is always the app
 // name (Apple HIG). Windows/Linux use the File menu as the first menu.
 
+const fs = require("fs");
+const path = require("path");
 const { app, Menu, shell, BrowserWindow, dialog } = require("electron");
+
+// Find CHANGELOG.md. In the packaged app it's in process.resourcesPath
+// (via build.extraResources). In dev mode it's in the repo root.
+function findChangelogPath() {
+  const candidates = [
+    process.resourcesPath
+      ? path.join(process.resourcesPath, "CHANGELOG.md")
+      : null,
+    path.join(__dirname, "..", "CHANGELOG.md"),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      fs.accessSync(p, fs.constants.R_OK);
+      return p;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+// Extract the section for the given version. Returns plain text (markdown
+// stripped of heading hashes / bullets / inline-code backticks) suitable
+// for a native dialog's detail field.
+function readReleaseNotes(version) {
+  const file = findChangelogPath();
+  if (!file) return null;
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  const marker = `## [${version}]`;
+  const start = text.indexOf(marker);
+  if (start === -1) return null;
+  const after = start + marker.length;
+  const nextStart = text.indexOf("\n## [", after);
+  const section = text
+    .slice(after, nextStart === -1 ? undefined : nextStart)
+    .trim();
+  // Strip markdown chrome so the native dialog renders cleanly.
+  return section
+    .replace(/^### +/gm, "") // sub-headings
+    .replace(/\*\*(.*?)\*\*/g, "$1") // bold
+    .replace(/`([^`]+)`/g, "$1") // inline code
+    .replace(/^- /gm, "• ") // bullets
+    .trim();
+}
 
 function showAboutDialog(parent) {
   const version = app.getVersion();
-  const detail = [
+  const notes = readReleaseNotes(version);
+  const lines = [
     `Version ${version}`,
     "",
     "Verwaltung von Pruefungsfragen, Weiterbildungsgaengen und Pruefungen.",
-    "",
-    "© AIM",
-  ].join("\n");
+  ];
+  if (notes) {
+    lines.push("", "— Neu in dieser Version —", "", notes);
+  }
+  lines.push("", "© AIM");
   dialog.showMessageBox(parent ?? undefined, {
     type: "info",
     title: "Ueber AIM Pruefungs-Manager",
     message: "AIM Pruefungs-Manager",
-    detail,
+    detail: lines.join("\n"),
     buttons: ["Schliessen"],
     defaultId: 0,
   });

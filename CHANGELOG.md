@@ -4,6 +4,44 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.8] — 2026-05-17
+
+### Behoben
+- Druck-Fenster schliesst sich automatisch, sobald der System-Druck-Dialog
+  abgeschlossen wurde — keine Fenster-Leichen mehr im Dock.
+- `window-state.json` wird beim App-Beenden synchron geschrieben statt mit
+  400 ms Debounce. Verhindert, dass die letzte Resize-Änderung vor dem
+  Quit verloren geht.
+- Automatische Sicherung (`aim_last_backup`) warnt jetzt mit einem Toast,
+  wenn der Snapshot wegen vollem Speicher nicht erstellt werden konnte.
+- ErrorBoundary „✓ Sicherung heruntergeladen"-Status wird nach 3 s
+  zurückgesetzt — zweiter Klick zeigt wieder das ursprüngliche Label.
+- Speicher-Indikator zeigt zusätzlich das Datum, wenn die letzte Sicherung
+  nicht am selben Tag erfolgte (verhindert irreführende „14:23" wenn die
+  App über Mitternacht offen war).
+
+### Verändert
+- „↓ PDF drucken" heisst jetzt „↓ Als PDF speichern" — entspricht besser
+  dem tatsächlichen Endergebnis (System-Druckdialog mit „Als PDF
+  sichern"-Option). Format der gedruckten PDF ist unverändert
+  (Testportal-kompatibel).
+- „Über AIM Prüfungs-Manager" zeigt jetzt die Release-Notes der aktuellen
+  Version, gelesen aus der gebündelten `CHANGELOG.md`.
+
+### Tooling
+- `CHANGELOG.md` wird über `extraResources` ins Release-Bundle eingebettet.
+
+## [1.0.7] — 2026-05-17
+
+### Behoben
+- „↓ PDF drucken" / „↓ Handbuch als PDF" erzeugten keine PDF-Datei mehr.
+  Der Electron-WindowOpenHandler in `electron/main.cjs` hat das benötigte
+  `about:blank`-Fenster blockiert — `window.open` gab `null` zurück und
+  beide Print-Funktionen verliessen still die Funktion. Handler erlaubt
+  jetzt blanke URLs (nur für den Druck-Flow). Beide Print-Funktionen
+  geben einen Boolean zurück, der UI-Button zeigt einen Fehler-Toast,
+  falls das Fenster nicht geöffnet werden konnte.
+
 ## [1.0.6] — 2026-05-17
 
 ### Hinzugefügt

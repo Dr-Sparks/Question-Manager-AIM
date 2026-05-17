@@ -806,7 +806,10 @@ function printAsPdf(qs,title){
     return`<div style="margin-bottom:16px"><p style="margin:0 0 3px;font-style:italic;text-decoration:underline">${i+1}. Titel des Kurses: ${escapeHtml(q.course||'')}</p><p style="margin:0 0 4px;font-weight:600">${escapeHtml(q.question||'')}</p>${optsHtml}</div>`;
   }).join('');
   // System fonts only — print window is offline-safe, no CDN dependency.
-  w.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(title||'AIM Pruefung')}</title><style>body{font-family:Calibri,Helvetica,Arial,sans-serif;font-size:10pt;margin:0.5cm}@media print{@page{margin:0.5cm}}</style></head><body>${body}</body></html>`);
+  // afterprint listener self-closes the window after print/save-as-PDF or
+  // cancel so it doesn't linger in the dock. The script has no user input,
+  // so injecting it inline is safe even with the existing CSP elsewhere.
+  w.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(title||'AIM Pruefung')}</title><style>body{font-family:Calibri,Helvetica,Arial,sans-serif;font-size:10pt;margin:0.5cm}@media print{@page{margin:0.5cm}}</style></head><body>${body}<script>window.addEventListener('afterprint',function(){try{window.close();}catch(e){}});</script></body></html>`);
   w.document.close();
   w.focus();
   setTimeout(()=>w.print(),400);
@@ -1320,7 +1323,14 @@ function SaveIndicator({lastSavedAt}){
     return ()=>clearTimeout(t);
   },[lastSavedAt]);
   if(!lastSavedAt) return null;
-  const stamp=new Date(lastSavedAt).toLocaleTimeString('de-CH',{hour:'2-digit',minute:'2-digit'});
+  const savedDate=new Date(lastSavedAt);
+  const now=new Date();
+  // Include the date when the timestamp isn't from today, so an app left
+  // open across midnight doesn't display a misleading bare HH:MM.
+  const sameDay=savedDate.toDateString()===now.toDateString();
+  const stamp=sameDay
+    ?savedDate.toLocaleTimeString('de-CH',{hour:'2-digit',minute:'2-digit'})
+    :savedDate.toLocaleString('de-CH',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
   return(
     <div
       role="status"
@@ -2396,10 +2406,10 @@ function ExportView({exam,programName,setView,showToast,showConfirm,onSaveAndNew
           <Btn ch="💾 Speichern & neu" onClick={openSaveDialog} v="primary"/>
           <Btn ch={copied?'✓ Kopiert!':'Kopieren'} onClick={copy} v={copied?'success':'ghost'}/>
           <Btn ch="↓ TXT" onClick={()=>dlFile(txt,`AIM_Pruefung_${(programName||'Export').replace(/\s+/g,'_')}.txt`)} v="secondary"/>
-          <Btn ch="↓ PDF drucken" onClick={()=>{
+          <Btn ch="↓ Als PDF speichern" onClick={()=>{
             const ok=printAsPdf(exam,`AIM Prüfung – ${programName||'Export'}`);
-            if(!ok) showToast('PDF-Druckfenster konnte nicht geöffnet werden. Bitte App neu starten und erneut versuchen.','error');
-          }} v="accent"/>
+            if(!ok) showToast('PDF-Fenster konnte nicht geöffnet werden. Bitte App neu starten und erneut versuchen.','error');
+          }} v="accent" title="Öffnet den Druck-Dialog — dort &quot;Als PDF sichern&quot; wählen"/>
           <Btn ch="✕ Prüfung löschen" onClick={onClear} v="ghost"/>
         </div>
       }/>
@@ -3108,6 +3118,7 @@ function printHelpManualPdf(manualKey, manualData){
         <div style="font:400 13px 'Source Sans 3', system-ui, sans-serif; color:#666;">Exportiert aus dem AIM Prüfungs-Manager</div>
       </header>
       ${sectionsHtml}
+      <script>window.addEventListener('afterprint',function(){try{window.close();}catch(e){}});</script>
     </body>
   </html>`);
   w.document.close();
@@ -3475,39 +3486,44 @@ export default function AIMExamManager(){
   // The Dashboard exposes a "Letzten Stand wiederherstellen" button when
   // this key is present so a regret-click is always one click away from
   // being undone.
+  //
+  // Returns true on success, false if the snapshot couldn't be written
+  // (e.g. quota exceeded). On false we warn the user — the destructive
+  // op still proceeds, but they should know the safety net is missing.
   const saveLastBackup=useCallback(()=>{
+    let help=null;
+    const galleries={};
     try{
-      let help=null;
-      const galleries={};
-      try{
-        const raw=window.localStorage.getItem('aim_help_v2');
-        if(raw) help=JSON.parse(raw);
-      }catch{}
-      try{
-        for(let i=0;i<window.localStorage.length;i++){
-          const key=window.localStorage.key(i);
-          if(key && key.startsWith('aim_gallery_')){
-            try{ galleries[key]=JSON.parse(window.localStorage.getItem(key)||'null'); }catch{}
-          }
+      const raw=window.localStorage.getItem('aim_help_v2');
+      if(raw) help=JSON.parse(raw);
+    }catch{}
+    try{
+      for(let i=0;i<window.localStorage.length;i++){
+        const key=window.localStorage.key(i);
+        if(key && key.startsWith('aim_gallery_')){
+          try{ galleries[key]=JSON.parse(window.localStorage.getItem(key)||'null'); }catch{}
         }
-      }catch{}
-      const snapshot={
-        version:3,
-        capturedAt:new Date().toISOString(),
-        reason:'auto-before-destructive-op',
-        questions,
-        programs,
-        savedExams,
-        currentExam:exam?{exam,name:examName||''}:null,
-        help,
-        galleries,
-      };
+      }
+    }catch{}
+    const snapshot={
+      version:3,
+      capturedAt:new Date().toISOString(),
+      reason:'auto-before-destructive-op',
+      questions,
+      programs,
+      savedExams,
+      currentExam:exam?{exam,name:examName||''}:null,
+      help,
+      galleries,
+    };
+    try{
       window.localStorage.setItem('aim_last_backup',JSON.stringify(snapshot));
-    }catch{
-      // If we can't snapshot (quota), the destructive op still proceeds —
-      // the user has been warned about storage issues via safePersist.
+      return true;
+    }catch(err){
+      showToast(`Automatische Sicherung konnte nicht erstellt werden (${err?.name||'Speicher voll'}). „Letzten Stand wiederherstellen" ist nach dieser Aktion nicht verfügbar. Bitte vorab ein JSON-Backup exportieren.`,'warning');
+      return false;
     }
-  },[questions,programs,savedExams,exam,examName]);
+  },[questions,programs,savedExams,exam,examName,showToast]);
 
   const clearAllData=useCallback(()=>{
     // Snapshot first so "Letzten Stand wiederherstellen" can undo the wipe.

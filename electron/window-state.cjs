@@ -69,45 +69,55 @@ function load() {
     : { ...DEFAULTS, x: undefined, y: undefined, isMaximized: false, isFullScreen: false };
 
   let saveTimer = null;
-  const write = (data) => {
+  const writeSync = (data) => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    try {
+      fs.writeFileSync(fileFor(), JSON.stringify(data, null, 2));
+    } catch {
+      /* not fatal — next launch just uses defaults */
+    }
+  };
+  const writeDebounced = (data) => {
     if (saveTimer) clearTimeout(saveTimer);
-    // Debounce — resize fires fast.
-    saveTimer = setTimeout(() => {
-      try {
-        fs.writeFileSync(fileFor(), JSON.stringify(data, null, 2));
-      } catch {
-        /* not fatal — next launch just uses defaults */
-      }
-    }, 400);
+    // Debounce — resize/move fire fast during a drag.
+    saveTimer = setTimeout(() => writeSync(data), 400);
   };
 
   function manage(win) {
-    const capture = () => {
+    const capture = ({ sync = false } = {}) => {
       // Don't capture during maximize/fullscreen — we want the underlying
       // normal-mode size so we can restore it next launch.
       if (win.isDestroyed()) return;
+      let next;
       if (win.isMaximized() || win.isFullScreen()) {
-        write({
+        next = {
           ...state,
           isMaximized: win.isMaximized(),
           isFullScreen: win.isFullScreen(),
+        };
+      } else {
+        const b = win.getBounds();
+        Object.assign(state, b, {
+          isMaximized: false,
+          isFullScreen: false,
         });
-        return;
+        next = state;
       }
-      const b = win.getBounds();
-      Object.assign(state, b, {
-        isMaximized: false,
-        isFullScreen: false,
-      });
-      write(state);
+      (sync ? writeSync : writeDebounced)(next);
     };
-    win.on("resize", capture);
-    win.on("move", capture);
-    win.on("maximize", capture);
-    win.on("unmaximize", capture);
-    win.on("enter-full-screen", capture);
-    win.on("leave-full-screen", capture);
-    win.on("close", capture);
+    win.on("resize", () => capture());
+    win.on("move", () => capture());
+    win.on("maximize", () => capture());
+    win.on("unmaximize", () => capture());
+    win.on("enter-full-screen", () => capture());
+    win.on("leave-full-screen", () => capture());
+    // On close we MUST write synchronously — the debounced timer would
+    // otherwise be cancelled when the process exits and the latest
+    // resize wouldn't be persisted.
+    win.on("close", () => capture({ sync: true }));
 
     if (state.isMaximized) win.maximize();
     if (state.isFullScreen) win.setFullScreen(true);
