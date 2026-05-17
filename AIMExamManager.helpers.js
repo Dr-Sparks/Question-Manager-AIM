@@ -1,3 +1,15 @@
+// REFERENCE IMPLEMENTATIONS — not currently imported by AIMExamManager.jsx.
+//
+// The actual exam-building logic in the monolith uses hand-duplicated
+// equivalents inline. These pure-function versions live here so the
+// invariants (4-slot semesters, deterministic question ordering, export
+// payload shape, etc.) are exercised by `AIMExamManager.helpers.test.js`
+// in CI on every push.
+//
+// If you change the corresponding logic in the monolith, mirror the change
+// here so the tests stay meaningful. If you ever refactor the monolith,
+// wire these helpers in directly to remove the duplication.
+
 export const COURSE_SLOT_COUNT = 4;
 
 export function normalizeSlots(courseIds = []) {

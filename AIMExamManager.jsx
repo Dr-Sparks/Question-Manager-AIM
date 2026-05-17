@@ -28,6 +28,19 @@ const TERM_OPTIONS=['FS','HS'];
 const SEMESTER_COUNT=6;
 const MODULES_PER_SEMESTER=4;
 
+// Unified ID generator. Replaces a previously-mixed scheme of Date.now(),
+// Date.now()+Math.random() (which produced floats that lose precision in
+// Map keys), and ad-hoc string IDs. Prefers crypto.randomUUID (Electron has
+// it) and falls back to a timestamp+random combo for older runtimes.
+function newId(prefix='id'){
+  try{
+    if(typeof crypto!=='undefined' && typeof crypto.randomUUID==='function'){
+      return `${prefix}_${crypto.randomUUID()}`;
+    }
+  }catch{}
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
+}
+
 const q=(id,yr,lo,le,co,fm,qu,a,b,c,d,e,an)=>({id,year:yr,location:lo,lecturer:le,course:co,format:fm,question:qu,optA:a,optB:b||'',optC:c||'',optD:d||'',optE:e||'',answer:an});
 
 const INIT_Q=[
@@ -563,19 +576,21 @@ function importQuestionsExcel(file,setQuestions,showToast){
   reader.onload=evt=>{
     try{
       const wb=XLSX.read(evt.target.result,{type:'array'});
-      const ws=wb.Sheets['Fragen']||wb.Sheets[wb.SheetNames[0]];
+      const ws=wb.Sheets['Fragen']||wb.Sheets['Questions']||wb.Sheets[wb.SheetNames[0]];
       const imported=readQuestionsFromSheet(ws);
       if(!imported.length){
         showToast('Keine gültigen Fragen in der Excel-Datei gefunden.','error');
         return;
       }
+      let added=0, updated=0;
       setQuestions(prev=>{
         const byId=new Map(prev.map(q=>[String(q.id),q]));
-        imported.forEach((q,idx)=>{
-          const normalizedId=String(q.id||`import_${Date.now()}_${idx}`);
+        imported.forEach(q=>{
+          const normalizedId=String(q.id||newId('q'));
           const merged={...q,id:normalizedId};
           if(byId.has(normalizedId)){
             byId.set(normalizedId,merged);
+            updated++;
             return;
           }
           const duplicate=[...byId.values()].find(existing=>
@@ -584,13 +599,18 @@ function importQuestionsExcel(file,setQuestions,showToast){
           );
           if(duplicate){
             byId.set(String(duplicate.id),{...duplicate,...merged,id:duplicate.id});
+            updated++;
           }else{
             byId.set(normalizedId,merged);
+            added++;
           }
         });
         return [...byId.values()];
       });
-      showToast(`${imported.length} Fragen aus Excel übernommen.`,`success`);
+      const parts=[];
+      if(added) parts.push(`${added} neu hinzugefügt`);
+      if(updated) parts.push(`${updated} aktualisiert`);
+      showToast(parts.length?`Excel-Import: ${parts.join(', ')}.`:'Keine Änderungen aus Excel übernommen.','success');
     }catch{
       showToast('Excel-Datei konnte nicht gelesen werden.','error');
     }
@@ -682,17 +702,19 @@ function importExcel(file, setQuestions, setPrograms, setSavedExams, showToast, 
 
       // ── Fragen ────────────────────────────────────────────────────────────
       let newQuestions=[];
-      const wsQ = wb.Sheets['Fragen'];
+      const wsQ = wb.Sheets['Fragen'] || wb.Sheets['Questions'];
       if(wsQ){
-        newQuestions = readQuestionsFromSheet(wsQ).map((q,i)=>({...q,id:Date.now()+i}));
+        newQuestions = readQuestionsFromSheet(wsQ).map(q=>({...q,id:newId('q')}));
       }
 
       // ── Weiterbildungsgänge + Module ──────────────────────────────────────
+      // Sheet name fallbacks: round-trips through Numbers/LibreOffice can lose
+      // umlauts or truncate to 31 chars, silently dropping data otherwise.
       let newPrograms=[];
-      const wsP = wb.Sheets['Weiterbildungsgänge'];
-      const wsS = wb.Sheets['Semesteransicht'];
+      const wsP = wb.Sheets['Weiterbildungsgänge'] || wb.Sheets['Weiterbildungsgaenge'] || wb.Sheets['Programs'];
+      const wsS = wb.Sheets['Semesteransicht'] || wb.Sheets['Semester'];
       const wsM = wb.Sheets['Module'];
-      const wsE = wb.Sheets['Gespeicherte Prüfungen'];
+      const wsE = wb.Sheets['Gespeicherte Prüfungen'] || wb.Sheets['Gespeicherte Pruefungen'] || wb.Sheets['SavedExams'];
       const pRows = wsP ? XLSX.utils.sheet_to_json(wsP,{defval:''}) : [];
       const fromSemesterSheet = wsS ? buildProgramsFromSemesterSheet(wsS,pRows) : [];
       if(fromSemesterSheet.length){
@@ -743,7 +765,7 @@ function importExcel(file, setQuestions, setPrograms, setSavedExams, showToast, 
               return { year:mod?String(mod['Jahr']||''):'', lecturer:mod?String(mod['Dozent/in']||''):'', course:mod?String(mod['Kurs']||''):'' };
             }),
           }));
-          return { id:Date.now()+i+10000, name:String(r['Name']), startYear:String(r['Startjahr']||''), startTerm:String(r['Startsemester']||'HS'), semesters };
+          return { id:newId('p'), name:String(r['Name']), startYear:String(r['Startjahr']||''), startTerm:String(r['Startsemester']||'HS'), semesters };
         });
       }
       const newSavedExams=wsE?readSavedExamsFromSheet(wsE):[];
@@ -763,38 +785,10 @@ function importExcel(file, setQuestions, setPrograms, setSavedExams, showToast, 
   reader.readAsArrayBuffer(file);
 }
 
-async function dlDocx(qs,filename){
-  const D=window.docxLib;
-  if(!D)return false;
-  const{Document,Packer,Paragraph,TextRun}=D;
-  const children=[];
-  qs.forEach((q,i)=>{
-    const correct=q.answer?q.answer.split(';'):[];
-    const opts=[{k:'A',t:q.optA},{k:'B',t:q.optB},{k:'C',t:q.optC},{k:'D',t:q.optD},{k:'E',t:q.optE}].filter(o=>o.t);
-    // "N. Titel des Kurses: [Course]" — italic + underline
-    children.push(new Paragraph({
-      children:[
-        new TextRun({text:`${i+1}. Titel des Kurses: `,size:20,font:'Calibri',italics:true,underline:{type:'single'}}),
-        new TextRun({text:q.course||'',size:20,font:'Calibri',italics:true,underline:{type:'single'}}),
-      ],spacing:{after:80}
-    }));
-    // Question text
-    children.push(new Paragraph({children:[new TextRun({text:q.question,size:20,font:'Calibri'})],spacing:{after:80}}));
-    // Answer options a) b) c) — correct answers in bold
-    opts.forEach(o=>{
-      const lbl=o.k.toLowerCase();
-      const isCorrect=correct.includes(o.k);
-      children.push(new Paragraph({children:[new TextRun({text:`${lbl}) ${o.t}`,size:20,font:'Calibri',bold:isCorrect})],spacing:{after:40}}));
-    });
-    // Spacer paragraph
-    children.push(new Paragraph({children:[new TextRun({text:' ',size:20,font:'Calibri'})],spacing:{after:160}}));
-  });
-  const doc=new Document({sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:1440,right:1440,bottom:1440,left:1440}}},children}]});
-  const blob=await Packer.toBlob(doc);
-  dlFile(blob,filename,'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-  return true;
-}
-
+// NOTE: All interpolations into the printed HTML go through escapeHtml().
+// The questions can come from user-supplied Excel or JSON imports, so without
+// escaping a poisoned import could XSS the print window (file:// origin in
+// the packaged Electron build = local file access).
 function printAsPdf(qs,title){
   const w=window.open('','_blank');
   if(!w)return;
@@ -803,11 +797,12 @@ function printAsPdf(qs,title){
     const opts=[{k:'A',t:q.optA},{k:'B',t:q.optB},{k:'C',t:q.optC},{k:'D',t:q.optD},{k:'E',t:q.optE}].filter(o=>o.t);
     const optsHtml=opts.map(o=>{
       const isC=correct.includes(o.k);
-      return`<p style="margin:1px 0 1px 14px;font-weight:${isC?'bold':'normal'}">${o.k.toLowerCase()}) ${o.t}</p>`;
+      return`<p style="margin:1px 0 1px 14px;font-weight:${isC?'bold':'normal'}">${escapeHtml(o.k.toLowerCase())}) ${escapeHtml(o.t)}</p>`;
     }).join('');
-    return`<div style="margin-bottom:16px"><p style="margin:0 0 3px;font-style:italic;text-decoration:underline">${i+1}. Titel des Kurses: ${q.course||''}</p><p style="margin:0 0 4px;font-weight:600">${q.question}</p>${optsHtml}</div>`;
+    return`<div style="margin-bottom:16px"><p style="margin:0 0 3px;font-style:italic;text-decoration:underline">${i+1}. Titel des Kurses: ${escapeHtml(q.course||'')}</p><p style="margin:0 0 4px;font-weight:600">${escapeHtml(q.question||'')}</p>${optsHtml}</div>`;
   }).join('');
-  w.document.write(`<!DOCTYPE html><html><head><title>${title||'AIM Prüfung'}</title><style>body{font-family:Calibri,sans-serif;font-size:10pt;margin:0.5cm}@media print{@page{margin:0.5cm}}</style></head><body>${body}</body></html>`);
+  // System fonts only — print window is offline-safe, no CDN dependency.
+  w.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(title||'AIM Pruefung')}</title><style>body{font-family:Calibri,Helvetica,Arial,sans-serif;font-size:10pt;margin:0.5cm}@media print{@page{margin:0.5cm}}</style></head><body>${body}</body></html>`);
   w.document.close();
   w.focus();
   setTimeout(()=>w.print(),400);
@@ -826,7 +821,11 @@ const gridInput={...inp,fontSize:'12px',padding:'6px 8px',borderRadius:0,backgro
 
 function getSemesterState(program,semNumber){
   const now=currentAcademicTag();
-  const startIndex=Number(program.startYear||now.year)*2+(program.startTerm==='HS'?1:0);
+  // Guard: empty/invalid startYear must fall back to the current academic
+  // year, otherwise NaN propagates and every semester is misclassified.
+  const yearRaw=Number(program.startYear);
+  const startYear=Number.isFinite(yearRaw)&&yearRaw>1900?yearRaw:Number(now.year);
+  const startIndex=startYear*2+(program.startTerm==='HS'?1:0);
   const currentIndex=Number(now.year)*2+(now.term==='HS'?1:0);
   const semesterIndex=startIndex+(semNumber-1);
   if(semesterIndex<currentIndex)return'completed';
@@ -866,10 +865,10 @@ function Field({label,children,half}){
   );
 }
 
-function Btn({ch,onClick,v='primary',sm,dis,full,style:s={}}){
+function Btn({ch,onClick,v='primary',sm,dis,full,style:s={},autoFocus,title}){
   const base={fontFamily:sans,fontWeight:500,cursor:dis?'not-allowed':'pointer',border:'none',borderRadius:4,padding:sm?'6px 14px':'9px 20px',fontSize:sm?'12px':'14px',opacity:dis?.55:1,width:full?'100%':undefined,...s};
   const vs={primary:{background:C.t,color:C.wh},secondary:{background:'transparent',color:C.t,border:`1.5px solid ${C.t}`},ghost:{background:'transparent',color:C.mu,border:`1px solid ${C.bo}`},danger:{background:C.re,color:C.wh},accent:{background:C.ac,color:C.wh},success:{background:C.gr,color:C.wh}};
-  return<button onClick={dis?undefined:onClick} style={{...base,...(vs[v]||vs.primary)}}>{ch}</button>;
+  return<button type="button" autoFocus={autoFocus} title={title} onClick={dis?undefined:onClick} style={{...base,...(vs[v]||vs.primary)}}>{ch}</button>;
 }
 
 function Badge({ch,color='teal',sm}){
@@ -893,15 +892,30 @@ function ToastContainer({toasts,onRemove}){
 }
 
 function ConfirmModal({confirm,onClose}){
+  useEffect(()=>{
+    if(!confirm) return;
+    const prevActive=document.activeElement;
+    const onKey=e=>{
+      if(e.key==='Escape'){
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown',onKey);
+    return()=>{
+      window.removeEventListener('keydown',onKey);
+      try{ if(prevActive && typeof prevActive.focus==='function') prevActive.focus(); }catch{}
+    };
+  },[confirm,onClose]);
   if(!confirm)return null;
   return(
-    <div style={{position:'fixed',inset:0,background:'rgba(17,17,17,0.5)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="aim-confirm-title" style={{position:'fixed',inset:0,background:'rgba(17,17,17,0.5)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={onClose}>
       <div style={{background:C.wh,borderRadius:8,padding:'24px',maxWidth:400,width:'90%',boxShadow:'0 8px 40px rgba(0,0,0,0.25)'}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontFamily:serif,fontSize:'17px',color:C.tD,marginBottom:10,fontWeight:700}}>Bestätigung</div>
+        <div id="aim-confirm-title" style={{fontFamily:serif,fontSize:'17px',color:C.tD,marginBottom:10,fontWeight:700}}>Bestätigung</div>
         <p style={{fontSize:'14px',color:C.tx,margin:'0 0 20px',lineHeight:1.5}}>{confirm.message}</p>
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-          <Btn ch="Abbrechen" onClick={onClose} v="ghost"/>
-          <Btn ch={confirm.confirmLabel||'Löschen'} onClick={()=>{confirm.onConfirm();onClose();}} v={confirm.confirmV||'danger'}/>
+          <Btn ch="Abbrechen" onClick={onClose} v="ghost" autoFocus/>
+          <Btn ch={confirm.confirmLabel||'Löschen'} onClick={()=>{confirm.onConfirm?.();onClose();}} v={confirm.confirmV||'danger'}/>
         </div>
       </div>
     </div>
@@ -1059,15 +1073,6 @@ function ImageSlot({id,storageId,editMode}){
     };
     reader.readAsDataURL(file);
   };
-  const updateSelectedAnno=updater=>{
-    if(!selected)return;
-    sync(items.map(item=>item.id!==selected.id?item:{...item,annotations:item.annotations.map((anno,idx)=>idx===0 && false?anno:anno)}));
-    setItems(cur=>{
-      const next=cur.map(item=>item.id!==selected.id?item:{...item,annotations:item.annotations.map(anno=>anno.id===selectedAnnotation?.id?updater(anno):anno)});
-      saveHelpGallery(storageId,next);
-      return next;
-    });
-  };
   const[selectedAnnoId,setSelectedAnnoId]=useState(null);
   const selectedAnnotation=selected?.annotations?.find(anno=>anno.id===selectedAnnoId)||null;
   useEffect(()=>{
@@ -1075,10 +1080,17 @@ function ImageSlot({id,storageId,editMode}){
       setSelectedAnnoId(null);
     }
   },[selected,selectedAnnoId]);
+  // Keep the latest annotation state in a ref so the keydown listener doesn't
+  // get re-registered on every items/annotation change (previous version
+  // rebound on every keystroke).
+  const annoStateRef=useRef({selected,selectedAnnotation});
+  annoStateRef.current={selected,selectedAnnotation};
   useEffect(()=>{
-    if(!editMode || !selected || !selectedAnnotation) return;
+    if(!editMode) return;
     const onKeyDown=e=>{
       if(activeHelpSlotId!==slotIdRef.current) return;
+      const {selected:s,selectedAnnotation:a}=annoStateRef.current;
+      if(!s || !a) return;
       const target=e.target;
       const tag=target?.tagName?.toLowerCase();
       if(tag==='input' || tag==='textarea' || tag==='select' || target?.isContentEditable) return;
@@ -1088,20 +1100,20 @@ function ImageSlot({id,storageId,editMode}){
       const key=e.key.toLowerCase();
       if(!['w','a','s','d','q','e','x','c','y','v'].includes(key)) return;
       e.preventDefault();
-      if(key==='w') patchAnnotation(selectedAnnotation.id,{y:clamp(Number(selectedAnnotation.y||0)-step,0,95)});
-      if(key==='s') patchAnnotation(selectedAnnotation.id,{y:clamp(Number(selectedAnnotation.y||0)+step,0,95)});
-      if(key==='a') patchAnnotation(selectedAnnotation.id,{x:clamp(Number(selectedAnnotation.x||0)-step,0,95)});
-      if(key==='d') patchAnnotation(selectedAnnotation.id,{x:clamp(Number(selectedAnnotation.x||0)+step,0,95)});
-      if(key==='q') patchAnnotation(selectedAnnotation.id,{rotation:Number(selectedAnnotation.rotation||0)-rotateStep});
-      if(key==='e') patchAnnotation(selectedAnnotation.id,{rotation:Number(selectedAnnotation.rotation||0)+rotateStep});
-      if(key==='x') patchAnnotation(selectedAnnotation.id,{w:clamp(Number(selectedAnnotation.w||0)+step,4,95)});
-      if(key==='y') patchAnnotation(selectedAnnotation.id,{w:clamp(Number(selectedAnnotation.w||0)-step,4,95)});
-      if(key==='c') patchAnnotation(selectedAnnotation.id,{h:clamp(Number(selectedAnnotation.h||0)+step,4,95)});
-      if(key==='v') patchAnnotation(selectedAnnotation.id,{h:clamp(Number(selectedAnnotation.h||0)-step,4,95)});
+      if(key==='w') patchAnnotation(a.id,{y:clamp(Number(a.y||0)-step,0,95)});
+      if(key==='s') patchAnnotation(a.id,{y:clamp(Number(a.y||0)+step,0,95)});
+      if(key==='a') patchAnnotation(a.id,{x:clamp(Number(a.x||0)-step,0,95)});
+      if(key==='d') patchAnnotation(a.id,{x:clamp(Number(a.x||0)+step,0,95)});
+      if(key==='q') patchAnnotation(a.id,{rotation:Number(a.rotation||0)-rotateStep});
+      if(key==='e') patchAnnotation(a.id,{rotation:Number(a.rotation||0)+rotateStep});
+      if(key==='x') patchAnnotation(a.id,{w:clamp(Number(a.w||0)+step,4,95)});
+      if(key==='y') patchAnnotation(a.id,{w:clamp(Number(a.w||0)-step,4,95)});
+      if(key==='c') patchAnnotation(a.id,{h:clamp(Number(a.h||0)+step,4,95)});
+      if(key==='v') patchAnnotation(a.id,{h:clamp(Number(a.h||0)-step,4,95)});
     };
     window.addEventListener('keydown',onKeyDown);
     return()=>window.removeEventListener('keydown',onKeyDown);
-  },[editMode,selected,selectedAnnotation,items]);
+  },[editMode]);
   useEffect(()=>()=>{ if(activeHelpSlotId===slotIdRef.current) activeHelpSlotId=null; },[]);
   const addAnnotation=type=>{
     if(!editMode || !selected)return;
@@ -1296,29 +1308,96 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
   const excelImportRef=useRef(null);
   const courses=[...new Set(questions.map(q=>q.course))];
   const fmtCounts=FORMATS.map(f=>({f,n:questions.filter(q=>q.format===f).length}));
+  // Snapshot the help-manual content + all gallery (image) entries from
+  // localStorage so the JSON backup is genuinely complete.
+  const snapshotHelpAndGalleries=()=>{
+    let help=null;
+    const galleries={};
+    try{
+      const raw=window.localStorage.getItem('aim_help_v2');
+      if(raw) help=JSON.parse(raw);
+    }catch{ help=null; }
+    try{
+      for(let i=0;i<window.localStorage.length;i++){
+        const key=window.localStorage.key(i);
+        if(key && key.startsWith('aim_gallery_')){
+          try{ galleries[key]=JSON.parse(window.localStorage.getItem(key)||'null'); }catch{}
+        }
+      }
+    }catch{}
+    return {help, galleries};
+  };
   const exportBackup=()=>{
-    const data=JSON.stringify({version:2,exportedAt:new Date().toISOString(),questions,programs,semesterView:buildSemesterOverviewEntries(programs),savedExams,currentExam:exam?{exam,name:examName||''}:null},null,2);
+    const {help,galleries}=snapshotHelpAndGalleries();
+    const data=JSON.stringify({
+      version:3,
+      exportedAt:new Date().toISOString(),
+      questions,
+      programs,
+      semesterView:buildSemesterOverviewEntries(programs),
+      savedExams,
+      currentExam:exam?{exam,name:examName||''}:null,
+      help,
+      galleries,
+    },null,2);
     dlFile(data,`AIM_Backup_${new Date().toISOString().slice(0,10)}.json`,'application/json');
     showToast('Backup-Datei wird heruntergeladen.','success');
   };
+  const applyRestore=data=>{
+    if(!Array.isArray(data.questions)||!Array.isArray(data.programs)){
+      showToast('Ungültige Backup-Datei.','error');
+      return;
+    }
+    setQuestions(data.questions);
+    setPrograms(normalizePrograms(data.programs));
+    setSavedExams(Array.isArray(data.savedExams)?data.savedExams:[]);
+    setExam(data.currentExam?.exam||null);
+    setExamName(data.currentExam?.name||'');
+    // Restore help + galleries (v3+ backups). Validate keys defensively —
+    // gallery keys are written back into localStorage as-is.
+    if(data.help && typeof data.help==='object'){
+      try{ window.localStorage.setItem('aim_help_v2',JSON.stringify(data.help)); }catch{}
+    }
+    if(data.galleries && typeof data.galleries==='object'){
+      try{
+        Object.entries(data.galleries).forEach(([key,value])=>{
+          if(typeof key==='string' && /^aim_gallery_[A-Za-z0-9_-]+$/.test(key)){
+            try{ window.localStorage.setItem(key,JSON.stringify(value)); }catch{}
+          }
+        });
+      }catch{}
+    }
+    showToast(`Backup wiederhergestellt: ${data.questions.length} Fragen, ${data.programs.length} Programme, ${(data.savedExams||[]).length} gespeicherte Prüfungen.`,'success');
+  };
   const restoreBackup=e=>{
     const file=e.target.files[0];
-    if(!file)return;
-    const reader=new FileReader();
-    reader.onload=evt=>{
-      try{
-        const data=JSON.parse(evt.target.result);
-        if(!Array.isArray(data.questions)||!Array.isArray(data.programs)){showToast('Ungültige Backup-Datei.','error');return;}
-        setQuestions(data.questions);
-        setPrograms(normalizePrograms(data.programs));
-        setSavedExams(Array.isArray(data.savedExams)?data.savedExams:[]);
-        setExam(data.currentExam?.exam||null);
-        setExamName(data.currentExam?.name||'');
-        showToast(`Backup wiederhergestellt: ${data.questions.length} Fragen, ${data.programs.length} Programme, ${(data.savedExams||[]).length} gespeicherte Prüfungen.`,'success');
-      }catch{showToast('Backup-Datei konnte nicht gelesen werden.','error');}
-    };
-    reader.readAsText(file);
     e.target.value='';
+    if(!file)return;
+    showConfirm({
+      message:`Die aktuelle Datenbank wird durch den Inhalt von „${file.name}“ ersetzt. Fortfahren?`,
+      confirmLabel:'Wiederherstellen',
+      confirmV:'danger',
+      onConfirm:()=>{
+        const reader=new FileReader();
+        reader.onload=evt=>{
+          try{
+            const data=JSON.parse(evt.target.result);
+            applyRestore(data);
+          }catch{ showToast('Backup-Datei konnte nicht gelesen werden.','error'); }
+        };
+        reader.readAsText(file);
+      },
+    });
+  };
+  // Excel import wipes existing Q/P/SavedExams — confirm before doing so.
+  const requestExcelImport=file=>{
+    if(!file)return;
+    showConfirm({
+      message:`Die aktuelle Datenbank wird durch den Inhalt von „${file.name}“ ersetzt. Fortfahren?`,
+      confirmLabel:'Importieren',
+      confirmV:'danger',
+      onConfirm:()=>importExcel(file,setQuestions,setPrograms,setSavedExams,showToast,normalizePrograms),
+    });
   };
   return(
     <div style={{padding:28}}>
@@ -1376,7 +1455,7 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
           <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>Datensicherung</div>
           <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Alle Daten werden automatisch im Browser gespeichert. Für die Weitergabe oder Neuübernahme einer Datenversion empfiehlt sich der Export. Backups enthalten jetzt auch die <strong>gespeicherten Prüfungen</strong>.</p>
           <input ref={restoreRef} type="file" accept=".json" style={{display:'none'}} onChange={restoreBackup}/>
-          <input ref={excelImportRef} type="file" accept=".xlsx" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)importExcel(f,setQuestions,setPrograms,setSavedExams,showToast,normalizePrograms);e.target.value='';}}/>
+          <input ref={excelImportRef} type="file" accept=".xlsx" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];e.target.value='';requestExcelImport(f);}}/>
           <div style={{marginBottom:12}}>
             <div style={{fontSize:'11px',color:C.mu,marginBottom:6,fontWeight:500}}>JSON (vollständiges Backup)</div>
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
@@ -1430,7 +1509,7 @@ function Dashboard({questions,programs,exam,examName,savedExams,setView,setQuest
 }
 
 // ─── Question DB ──────────────────────────────────────────────────────────────
-const emptyQ=()=>({id:Date.now(),year:'',location:'',lecturer:'',course:'',format:'Single Choice',question:'',optA:'',optB:'',optC:'',optD:'',optE:'',answer:'A'});
+const emptyQ=()=>({id:newId('q'),year:'',location:'',lecturer:'',course:'',format:'Single Choice',question:'',optA:'',optB:'',optC:'',optD:'',optE:'',answer:'A'});
 
 function QuestionDB({questions,setQuestions,showToast,showConfirm}){
   const[mode,setMode]=useState('list'); // 'list' | 'form'
@@ -1473,9 +1552,14 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
     cancel();
   };
   const del=id=>{
-    showConfirm('Frage wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.',()=>{
-      setQuestions(prev=>prev.filter(q=>q.id!==id));
-      showToast('Frage gelöscht.','success');
+    showConfirm({
+      message:'Frage wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.',
+      confirmLabel:'Löschen',
+      confirmV:'danger',
+      onConfirm:()=>{
+        setQuestions(prev=>prev.filter(q=>q.id!==id));
+        showToast('Frage gelöscht.','success');
+      },
     });
   };
   const importFile=e=>{
@@ -1507,7 +1591,7 @@ function QuestionDB({questions,setQuestions,showToast,showConfirm}){
         const toAdd=[];
         rows.forEach(r=>{
           if(!r.course||!r.question||!r.answer){skipped++;return;}
-          toAdd.push({id:Date.now()+Math.random(),year:r.year||'',location:r.location||'',lecturer:r.lecturer||'',course:r.course,format:FORMATS.includes(r.format)?r.format:'Single Choice',question:r.question,optA:r.optA||'',optB:r.optB||'',optC:r.optC||'',optD:r.optD||'',optE:r.optE||'',answer:r.answer});
+          toAdd.push({id:newId('q'),year:r.year||'',location:r.location||'',lecturer:r.lecturer||'',course:r.course,format:FORMATS.includes(r.format)?r.format:'Single Choice',question:r.question,optA:r.optA||'',optB:r.optB||'',optC:r.optC||'',optD:r.optD||'',optE:r.optE||'',answer:r.answer});
           added++;
         });
         setQuestions(prev=>[...prev,...toAdd]);
@@ -1790,6 +1874,29 @@ const stickyCell={position:'sticky',zIndex:3};
 const stickyNr={...stickyCell,left:0};
 const stickyWbg={...stickyCell,left:NR_W};
 
+// HOISTED out of SemesterMatrix. Previously this was declared inside the
+// parent's render, which meant React saw a new component type on every
+// render and unmounted+remounted the input on every keystroke (losing
+// focus). Hoisting makes the input stable.
+function GridInput({value,onChange,placeholder,list,locked}){
+  if(locked){
+    return (
+      <div style={{padding:'4px 2px',fontSize:'12px',color:value?'var(--c-tx)':'var(--c-mu)',minHeight:24,wordBreak:'break-word',whiteSpace:'pre-wrap'}}>
+        {value||<span style={{opacity:.45}}>{placeholder}</span>}
+      </div>
+    );
+  }
+  return (
+    <input
+      list={list}
+      style={{...gridInput,border:'1px solid var(--c-bo)',borderRadius:3,width:'100%',boxSizing:'border-box',minWidth:0}}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+    />
+  );
+}
+
 function SemesterMatrix({programs,questions,mode='manage',onProgramsChange,selectedProgramId,selectedModuleKeys,onSelectProgram,onToggleModule,onDeleteProgram,locked=false,scale=100,compact=false}){
   const courses=useMemo(()=>[...new Set(questions.map(q=>q.course))].sort(),[questions]);
   const prefillForCourse=course=>{const match=questions.find(q=>q.course===course);return match?{year:match.year||'',lecturer:match.lecturer||''}:{year:'',lecturer:''};};
@@ -1813,12 +1920,6 @@ function SemesterMatrix({programs,questions,mode='manage',onProgramsChange,selec
       })};
     })}));
   };
-  // Reusable editable / locked cell input
-  const GridInput=({value,onChange,placeholder,list})=>locked?(
-    <div style={{padding:'4px 2px',fontSize:'12px',color:value?'var(--c-tx)':'var(--c-mu)',minHeight:24,wordBreak:'break-word',whiteSpace:'pre-wrap'}}>{value||<span style={{opacity:.45}}>{placeholder}</span>}</div>
-  ):(
-    <input list={list} style={{...gridInput,border:'1px solid var(--c-bo)',borderRadius:3,width:'100%',boxSizing:'border-box',minWidth:0}} value={value} onChange={onChange} placeholder={placeholder}/>
-  );
 
   return(
     <div style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:8,boxShadow:'0 4px 16px rgba(0,0,0,0.06)',overflow:'hidden'}}>
@@ -1908,15 +2009,15 @@ function SemesterMatrix({programs,questions,mode='manage',onProgramsChange,selec
                       return mode==='manage'?(
                         <React.Fragment key={`${p.id}-${s.sem}-${moduleIndex}`}>
                           <td style={{...gridCell,borderLeft:'2px solid var(--c-grid-border)',background:bg,width:widths.yr,minWidth:widths.yr,padding:compact?'4px':'6px'}}>
-                            <GridInput value={module.year} onChange={e=>updateModule(p.id,s.sem,moduleIndex,'year',e.target.value)} placeholder={compact?'J':'Jahr'}/>
+                            <GridInput locked={locked} value={module.year} onChange={e=>updateModule(p.id,s.sem,moduleIndex,'year',e.target.value)} placeholder={compact?'J':'Jahr'}/>
                           </td>
                           <td style={{...gridCell,background:bg,width:widths.lec,minWidth:widths.lec,padding:compact?'4px':'6px'}}>
-                            <GridInput value={module.lecturer} onChange={e=>updateModule(p.id,s.sem,moduleIndex,'lecturer',e.target.value)} placeholder={compact?'Doz':'Dozent/in'}/>
+                            <GridInput locked={locked} value={module.lecturer} onChange={e=>updateModule(p.id,s.sem,moduleIndex,'lecturer',e.target.value)} placeholder={compact?'Doz':'Dozent/in'}/>
                           </td>
                           <td style={{...gridCell,background:bg,width:widths.course,minWidth:widths.course,padding:compact?'4px':'6px'}}>
                             {locked?(compact&&module.course
                                 ?<div title={module.course} style={{padding:'4px 2px',fontSize:'11px',color:'var(--c-tx)',minHeight:24,wordBreak:'break-word',lineHeight:1.2,fontWeight:600}}>{abbreviateCourseName(module.course)}</div>
-                                :<GridInput value={module.course} onChange={()=>{}} placeholder="Kursname eingeben…"/>)
+                                :<GridInput locked={locked} value={module.course} onChange={()=>{}} placeholder="Kursname eingeben…"/>)
                               :<CourseAutocomplete value={module.course} onChange={v=>updateModule(p.id,s.sem,moduleIndex,'course',v)} courses={courses} locked={false} placeholder="Kursname eingeben…" questions={questions}/>}
                             {module.course&&<div style={{fontSize:compact?'9px':'10px',color:'var(--c-mu)',marginTop:compact?2:3}}>{questionCount} Fragen</div>}
                           </td>
@@ -1969,15 +2070,20 @@ function Programs({programs,setPrograms,questions,showToast,showConfirm,settings
 
   const addProgram=()=>{
     if(!newName.trim())return;
-    setPrograms(prev=>[...prev,createProgram(Date.now(),newName.trim(),newStartYear,newStartTerm)]);
+    setPrograms(prev=>[...prev,createProgram(newId('p'),newName.trim(),newStartYear,newStartTerm)]);
     showToast(`Weiterbildungsgang „${newName.trim()}" erstellt.`,'success');
     setNewName('');setNewStartYear(currentAcademicTag().year);setNewStartTerm(currentAcademicTag().term);setAdding(false);
   };
   const delProgram=id=>{
     const prog=programs.find(p=>p.id===id);
-    showConfirm(`Weiterbildungsgang „${prog?.name||'diesen Eintrag'}" wirklich löschen? Alle Semesterdaten gehen verloren.`,()=>{
-      setPrograms(prev=>prev.filter(p=>p.id!==id));
-      showToast('Weiterbildungsgang gelöscht.','success');
+    showConfirm({
+      message:`Weiterbildungsgang „${prog?.name||'diesen Eintrag'}“ wirklich löschen? Alle Semesterdaten gehen verloren.`,
+      confirmLabel:'Löschen',
+      confirmV:'danger',
+      onConfirm:()=>{
+        setPrograms(prev=>prev.filter(p=>p.id!==id));
+        showToast('Weiterbildungsgang gelöscht.','success');
+      },
     });
   };
   const filteredPrograms=programs.filter(p=>!search.trim()||p.name.toLowerCase().includes(search.toLowerCase()));
@@ -2139,9 +2245,11 @@ function ExamBuilder({programs,questions,onBuild}){
 }
 
 // ─── Export View ──────────────────────────────────────────────────────────────
-function ExportView({exam,programName,setView,showToast,onSaveAndNew,onUpdateExam,onClear}){
+function ExportView({exam,programName,setView,showToast,showConfirm,onSaveAndNew,onUpdateExam,onClear}){
   const[copied,setCopied]=useState(false);
   const[editMode,setEditMode]=useState(false);
+  // null = dialog closed; string = current input value
+  const[saveDraftName,setSaveDraftName]=useState(null);
 
   if(!exam||exam.length===0) return(
     <div style={{padding:28}}>
@@ -2157,11 +2265,12 @@ function ExportView({exam,programName,setView,showToast,onSaveAndNew,onUpdateExa
 
   const txt=buildTxt(exam);
   const copy=()=>navigator.clipboard.writeText(txt).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
-  const saveAndStartNew=()=>{
-    const suggested=`${programName||'Prüfung'} · ${new Date().toLocaleDateString('de-CH')}`;
-    const chosen=window.prompt('Name für die gespeicherte Prüfung',suggested);
-    if(chosen===null) return;
-    onSaveAndNew?.(chosen.trim()||suggested);
+  const suggestedSaveName=()=>`${programName||'Prüfung'} · ${new Date().toLocaleDateString('de-CH')}`;
+  const openSaveDialog=()=>setSaveDraftName(suggestedSaveName());
+  const confirmSave=()=>{
+    const chosen=(saveDraftName||'').trim()||suggestedSaveName();
+    setSaveDraftName(null);
+    onSaveAndNew?.(chosen);
   };
   const moveQuestion=(index,direction)=>{
     onUpdateExam?.(prev=>{
@@ -2173,7 +2282,12 @@ function ExportView({exam,programName,setView,showToast,onSaveAndNew,onUpdateExa
     });
   };
   const removeQuestion=index=>{
-    onUpdateExam?.(prev=>prev.filter((_,i)=>i!==index));
+    showConfirm?.({
+      message:'Diese Frage aus der aktuellen Prüfung entfernen?',
+      confirmLabel:'Entfernen',
+      confirmV:'danger',
+      onConfirm:()=>onUpdateExam?.(prev=>prev.filter((_,i)=>i!==index)),
+    });
   };
 
   return(
@@ -2181,7 +2295,7 @@ function ExportView({exam,programName,setView,showToast,onSaveAndNew,onUpdateExa
       <SectionHeader title="Export & Download" sub={`${exam.length} Fragen · ${programName||'Prüfung'}`} action={
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           <Btn ch={editMode?'✓ Bearbeiten aktiv':'Bearbeiten'} onClick={()=>setEditMode(v=>!v)} v={editMode?'secondary':'ghost'}/>
-          <Btn ch="💾 Speichern & neu" onClick={saveAndStartNew} v="primary"/>
+          <Btn ch="💾 Speichern & neu" onClick={openSaveDialog} v="primary"/>
           <Btn ch={copied?'✓ Kopiert!':'Kopieren'} onClick={copy} v={copied?'success':'ghost'}/>
           <Btn ch="↓ TXT" onClick={()=>dlFile(txt,`AIM_Pruefung_${(programName||'Export').replace(/\s+/g,'_')}.txt`)} v="secondary"/>
           <Btn ch="↓ PDF drucken" onClick={()=>printAsPdf(exam,`AIM Prüfung – ${programName||'Export'}`)} v="accent"/>
@@ -2226,8 +2340,40 @@ function ExportView({exam,programName,setView,showToast,onSaveAndNew,onUpdateExa
         </div>
       </div>
       <div style={{background:'#FEF3E2',border:'1px solid #F6C90E44',borderRadius:8,padding:14,fontSize:'13px',color:'#7A4F10'}}>
-        <strong>Hinweis zum Import:</strong> Das DOCX-Format enthält native Word-Fettschrift für korrekte Antworten — genau wie das Testportal-Import-Template. Nach dem Download die Datei direkt im Testportal hochladen.
+        <strong>Hinweis:</strong> Die PDF-Datei lässt sich direkt im Testportal als Druckvorlage verwenden. Korrekte Antworten sind in der PDF fett markiert.
       </div>
+      {saveDraftName!==null&&(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="aim-save-dialog-title"
+          style={{position:'fixed',inset:0,background:'rgba(17,17,17,0.5)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center'}}
+          onClick={()=>setSaveDraftName(null)}
+        >
+          <div
+            style={{background:C.wh,borderRadius:8,padding:'24px',maxWidth:480,width:'90%',boxShadow:'0 8px 40px rgba(0,0,0,0.25)'}}
+            onClick={e=>e.stopPropagation()}
+          >
+            <div id="aim-save-dialog-title" style={{fontFamily:serif,fontSize:'17px',color:C.tD,marginBottom:10,fontWeight:700}}>Prüfung speichern</div>
+            <p style={{fontSize:'13px',color:C.mu,margin:'0 0 10px',lineHeight:1.5}}>Wähle einen Namen, unter dem die fertige Prüfung gespeichert werden soll. Danach kann direkt eine neue Prüfung gestartet werden.</p>
+            <input
+              autoFocus
+              style={{...inp,marginBottom:16}}
+              value={saveDraftName}
+              onChange={e=>setSaveDraftName(e.target.value)}
+              onKeyDown={e=>{
+                if(e.key==='Enter'){ e.preventDefault(); confirmSave(); }
+                if(e.key==='Escape'){ e.preventDefault(); setSaveDraftName(null); }
+              }}
+              placeholder="Name der Prüfung"
+            />
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <Btn ch="Abbrechen" onClick={()=>setSaveDraftName(null)} v="ghost"/>
+              <Btn ch="Speichern" onClick={confirmSave} v="primary"/>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2748,10 +2894,18 @@ function renderHelpImageHtml(storageId,imgId){
   try{
     const items=getHelpGallery(storageId,imgId);
     if(!items.length) return '';
+    // Sanity check src — must be a data: URL (what FileReader.readAsDataURL
+    // produces) or a relative/absolute http/file URL. Reject anything else
+    // (javascript:, data:text/html, ...) and escape what's left.
+    const safeSrc=raw=>{
+      const s=String(raw||'');
+      if(!/^(data:image\/|https?:|file:|\/)/i.test(s)) return '';
+      return escapeHtml(s);
+    };
     const images=items.map(item=>`
       <div style="flex:0 0 300px; max-width:300px;">
         <div style="position:relative; border:1px solid #d7d7d2; border-radius:8px; overflow:hidden; background:#fff;">
-          <img src="${item.src}" alt="" style="width:100%; display:block;" />
+          <img src="${safeSrc(item.src)}" alt="" style="width:100%; display:block;" />
           <div style="position:absolute; inset:0;">
             ${(item.annotations||[]).map(renderHelpAnnotationHtml).join('')}
           </div>
@@ -2842,7 +2996,9 @@ function printHelpManualPdf(manualKey, manualData){
         h1,h2,h3{page-break-after:avoid;}
         section{page-break-inside:auto;}
       </style>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap">
+      <!-- No remote font load. System fonts fall back gracefully and the
+           print window is fully offline-safe. -->
+
     </head>
     <body>
       <header style="margin:0 0 24px;">
@@ -2864,6 +3020,13 @@ function HelpPage(){
   const[editMode,setEditMode]=useState(false);
   const[unsaved,setUnsaved]=useState(false);
   const importRef=useRef(null);
+
+  // Publish unsaved state to a window flag so the root's navTo wrapper can
+  // intercept navigation away from this page and prompt the user.
+  useEffect(()=>{
+    try{ window.__aimHelpUnsaved=unsaved; }catch{}
+    return ()=>{ try{ window.__aimHelpUnsaved=false; }catch{} };
+  },[unsaved]);
   const[content,setContent]=useState(()=>{
     try{
       const s=JSON.parse(window.localStorage.getItem(HELP_KEY));
@@ -2926,7 +3089,14 @@ function HelpPage(){
       return next;
     });
   };
-  const save=()=>{window.localStorage.setItem(HELP_KEY,JSON.stringify(normalizeHelpContent(content)));setUnsaved(false);};
+  const save=()=>{
+    try{
+      window.localStorage.setItem(HELP_KEY,JSON.stringify(normalizeHelpContent(content)));
+      setUnsaved(false);
+    }catch(err){
+      window.alert(`Hilfe-Inhalt konnte nicht gespeichert werden: ${err?.message||'Speicher voll'}. Bitte das Handbuch als ZIP exportieren um Daten nicht zu verlieren.`);
+    }
+  };
   const updateManual=(updater)=>{
     setUnsaved(true);
     setContent(c=>normalizeHelpContent({
@@ -3156,14 +3326,40 @@ export default function AIMExamManager(){
   const[settings,setSettings]=useState(()=>{try{const s=JSON.parse(window.localStorage.getItem(SETTINGS_KEY));return s?{...DEFAULT_SETTINGS,...s}:DEFAULT_SETTINGS;}catch{return DEFAULT_SETTINGS;}});
 
   const showToast=useCallback((message,type='success')=>{
-    const id=Date.now()+Math.random();
+    const id=newId('toast');
     setToasts(prev=>[...prev,{id,message,type}]);
-    setTimeout(()=>setToasts(prev=>prev.filter(t=>t.id!==id)),4000);
+    // Scale display time with message length so long errors stay readable.
+    const text=String(message||'');
+    const duration=Math.max(4000,Math.min(15000,3000+text.length*60));
+    setTimeout(()=>setToasts(prev=>prev.filter(t=>t.id!==id)),duration);
   },[]);
 
-  const showConfirm=useCallback((message,onConfirm)=>{
-    setConfirm({message,onConfirm});
+  // Unified showConfirm. Accepts either {message, confirmLabel, confirmV,
+  // onConfirm} OR legacy positional (message, onConfirm). Both Dashboard
+  // (object form) and other views (positional form) used to call this
+  // differently; the two shapes had silently diverged.
+  const showConfirm=useCallback((arg,maybeOnConfirm)=>{
+    if(typeof arg==='string'){
+      setConfirm({message:arg,onConfirm:maybeOnConfirm});
+    }else if(arg && typeof arg==='object'){
+      setConfirm(arg);
+    }
   },[]);
+
+  // Persist effects — wrap every write so a quota overflow doesn't kill the
+  // render commit. Show a toast at most once per session so we don't spam.
+  const persistErrorShownRef=useRef(false);
+  const safePersist=useCallback((key,value)=>{
+    try{
+      window.localStorage.setItem(key,value);
+      persistErrorShownRef.current=false;
+    }catch(err){
+      if(!persistErrorShownRef.current){
+        persistErrorShownRef.current=true;
+        showToast(`Speicherfehler (${err?.name||'unbekannt'}): ${err?.message||'Speicher voll'}. Bitte jetzt ein JSON-Backup exportieren.`,'error');
+      }
+    }
+  },[showToast]);
 
   const clearAllData=useCallback(()=>{
     setQuestions([]);
@@ -3171,11 +3367,17 @@ export default function AIMExamManager(){
     setSavedExams([]);
     setExam(null);
     setExamName('');
+    // Wipe ALL data-bearing keys (including help content and every gallery
+    // entry). Preserve user-preference keys (dark mode, sidebar, settings,
+    // init flag, update-dismissed) so the app's chrome stays as the user
+    // configured it.
+    const DATA_KEYS=['aim_q','aim_p','aim_saved_exams','aim_exam','aim_help_v2'];
     try{
-      window.localStorage.removeItem('aim_q');
-      window.localStorage.removeItem('aim_p');
-      window.localStorage.removeItem('aim_saved_exams');
-      window.localStorage.removeItem('aim_exam');
+      DATA_KEYS.forEach(k=>window.localStorage.removeItem(k));
+      for(let i=window.localStorage.length-1;i>=0;i--){
+        const key=window.localStorage.key(i);
+        if(key && key.startsWith('aim_gallery_')) window.localStorage.removeItem(key);
+      }
     }catch{}
     setView('dashboard');
     showToast('Alle App-Daten wurden gelöscht. Du kannst jetzt eine neue JSON- oder Excel-Datei importieren.','success');
@@ -3183,67 +3385,97 @@ export default function AIMExamManager(){
 
   const toggleSidebar=()=>{
     setSidebarCollapsed(prev=>{
-      window.localStorage.setItem('aim_sidebar',prev?'0':'1');
+      try{ window.localStorage.setItem('aim_sidebar',prev?'0':'1'); }catch{}
       return !prev;
     });
   };
 
-  // Inject theme CSS once. Fonts are bundled via index.html for offline use.
+  // Inject theme CSS + global focus-visible style once. Fonts are bundled
+  // via index.html. The focus-visible rule gives keyboard users a clear
+  // outline on every interactive element without disturbing mouse users.
   useEffect(()=>{
+    if(document.getElementById('aim-theme')) return;
     const style=document.createElement('style');
     style.id='aim-theme';
-    style.textContent=`:root{${THEMES.light}}:root.dark{${THEMES.dark}}*{box-sizing:border-box;}`;
+    style.textContent=`
+      :root{${THEMES.light}}
+      :root.dark{${THEMES.dark}}
+      *{box-sizing:border-box;}
+      :focus-visible{outline:2px solid var(--c-ac); outline-offset:2px; border-radius:3px;}
+      button:focus-visible, a:focus-visible{outline:2px solid var(--c-ac); outline-offset:2px;}
+    `;
     document.head.appendChild(style);
   },[]);
 
   // Apply dark/light class
   useEffect(()=>{
     darkMode?document.documentElement.classList.add('dark'):document.documentElement.classList.remove('dark');
-    window.localStorage.setItem('aim_dark',darkMode?'1':'0');
+    try{ window.localStorage.setItem('aim_dark',darkMode?'1':'0'); }catch{}
   },[darkMode]);
 
-  // Persist — data is loaded in useState initialisers above, these only save on change
-  useEffect(()=>{window.localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings));},[settings]);
-  useEffect(()=>{window.localStorage.setItem('aim_q',JSON.stringify(questions));},[questions]);
-  useEffect(()=>{window.localStorage.setItem('aim_p',JSON.stringify(programs));},[programs]);
-  useEffect(()=>{window.localStorage.setItem('aim_saved_exams',JSON.stringify(savedExams));},[savedExams]);
+  // Persist — these only save on change after the initial mount.
+  useEffect(()=>{safePersist(SETTINGS_KEY,JSON.stringify(settings));},[settings,safePersist]);
+  useEffect(()=>{safePersist('aim_q',JSON.stringify(questions));},[questions,safePersist]);
+  useEffect(()=>{safePersist('aim_p',JSON.stringify(programs));},[programs,safePersist]);
+  useEffect(()=>{safePersist('aim_saved_exams',JSON.stringify(savedExams));},[savedExams,safePersist]);
   useEffect(()=>{
     if(exam){
-      window.localStorage.setItem('aim_exam',JSON.stringify({exam,name:examName}));
+      safePersist('aim_exam',JSON.stringify({exam,name:examName}));
     }else{
-      window.localStorage.removeItem('aim_exam');
+      try{ window.localStorage.removeItem('aim_exam'); }catch{}
     }
-  },[exam,examName]);
+  },[exam,examName,safePersist]);
+
+  // First-mount: restore the open exam if one was saved. Previously this
+  // effect wiped aim_exam on the very first run when the init flag was
+  // missing — which destroyed user data if they ever cleared cookies.
+  // Now we ALWAYS restore a saved exam if present and only set the init
+  // flag as a one-time marker.
   useEffect(()=>{
     try{
-      const alreadyInitialized=window.localStorage.getItem(APP_INIT_KEY)==='1';
-      if(!alreadyInitialized){
-        window.localStorage.setItem(APP_INIT_KEY,'1');
-        window.localStorage.removeItem('aim_exam');
-        setExam(null);
-        setExamName('');
-        return;
-      }
       const r=window.localStorage.getItem('aim_exam');
       if(r){
         const d=JSON.parse(r);
-        setExam(d.exam);
-        setExamName(d.name||'');
+        if(d && d.exam){
+          setExam(d.exam);
+          setExamName(d.name||'');
+        }
+      }
+      if(window.localStorage.getItem(APP_INIT_KEY)!=='1'){
+        window.localStorage.setItem(APP_INIT_KEY,'1');
       }
     }catch{}
   },[]);
 
-  const navTo=v=>{setView(v);};
+  // navTo wraps setView with an unsaved-changes guard for the Help editor.
+  // HelpPage publishes its unsaved state to window.__aimHelpUnsaved so we
+  // can intercept navigation from anywhere (sidebar, dashboard buttons).
+  const navTo=useCallback(v=>{
+    const unsaved=(typeof window!=='undefined'&&window.__aimHelpUnsaved)||false;
+    if(view==='help' && v!=='help' && unsaved){
+      showConfirm({
+        message:'Im Hilfe-Editor gibt es ungespeicherte Änderungen. Trotzdem zur anderen Seite wechseln?',
+        confirmLabel:'Verwerfen',
+        confirmV:'danger',
+        onConfirm:()=>{
+          try{ window.__aimHelpUnsaved=false; }catch{}
+          setView(v);
+        },
+      });
+      return;
+    }
+    setView(v);
+  },[view,showConfirm]);
 
   return(
     <div style={{display:'flex',minHeight:'100vh',fontFamily:sans,background:C.wW}}>
       <Sidebar view={view} setView={navTo} qCount={questions.length} pCount={programs.length} examCount={exam?.length} collapsed={sidebarCollapsed} onToggle={toggleSidebar} darkMode={darkMode} onToggleDark={()=>setDarkMode(d=>!d)}/>
       <div style={{flex:1,overflow:'auto'}}>
-        {view==='dashboard'&&<Dashboard questions={questions} programs={programs} exam={exam} examName={examName} savedExams={savedExams} setView={navTo} setQuestions={setQuestions} setPrograms={setPrograms} setSavedExams={setSavedExams} setExam={setExam} setExamName={setExamName} showToast={showToast} showConfirm={setConfirm} onClearAllData={clearAllData}/>}
+        {view==='dashboard'&&<Dashboard questions={questions} programs={programs} exam={exam} examName={examName} savedExams={savedExams} setView={navTo} setQuestions={setQuestions} setPrograms={setPrograms} setSavedExams={setSavedExams} setExam={setExam} setExamName={setExamName} showToast={showToast} showConfirm={showConfirm} onClearAllData={clearAllData}/>}
         {view==='questions'&&<QuestionDB questions={questions} setQuestions={setQuestions} showToast={showToast} showConfirm={showConfirm}/>}
         {view==='programs'&&<Programs programs={programs} setPrograms={setPrograms} questions={questions} showToast={showToast} showConfirm={showConfirm} settings={settings}/>}
-        {view==='exam'&&<ExamBuilder programs={programs} questions={questions} onBuild={(qs,name)=>{setExam(qs);setExamName(name||'');showToast(`Prüfung „${name}" mit ${qs.length} Fragen erstellt.`,'success');setView('export');}}/>}
-        {view==='export'&&<ExportView exam={exam} programName={examName} setView={navTo} showToast={showToast} onSaveAndNew={(savedName)=>{if(!exam?.length)return;const snapshot=createSavedExamSnapshot(exam,savedName||examName||'Prüfung',examName||'Prüfung');setSavedExams(prev=>[snapshot,...prev]);setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}showToast(`Prüfung „${snapshot.name}" gespeichert. Neue Prüfung kann gestartet werden.`,'success');setView('exam');}} onUpdateExam={updater=>setExam(prev=>typeof updater==='function'?updater(prev||[]):updater)} onClear={()=>{setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}}}/>}
+        {view==='exam'&&<ExamBuilder programs={programs} questions={questions} onBuild={(qs,name)=>{setExam(qs);setExamName(name||'');showToast(`Prüfung „${name}“ mit ${qs.length} Fragen erstellt.`,'success');setView('export');}}/>}
+        {view==='export'&&<ExportView exam={exam} programName={examName} setView={navTo} showToast={showToast} showConfirm={showConfirm} onSaveAndNew={(savedName)=>{if(!exam?.length)return;const snapshot=createSavedExamSnapshot(exam,savedName||examName||'Prüfung',examName||'Prüfung');setSavedExams(prev=>[snapshot,...prev]);setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}showToast(`Prüfung „${snapshot.name}“ gespeichert. Neue Prüfung kann gestartet werden.`,'success');setView('exam');}} onUpdateExam={updater=>setExam(prev=>typeof updater==='function'?updater(prev||[]):updater)} onClear={()=>{setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}}}/>}
         {view==='help'&&<HelpPage/>}
         {view==='settings'&&<SettingsPage settings={settings} setSettings={setSettings} darkMode={darkMode} onToggleDark={v=>setDarkMode(typeof v==='boolean'?v:d=>!d)}/>}
       </div>
