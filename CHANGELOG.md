@@ -4,6 +4,22 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.14] — 2026-05-18
+
+### Hinzugefügt
+- **Auto-Füllen-Button** je Weiterbildungsgang in der Semestermatrix.
+  Verteilt die für diesen Weiterbildungsgang getaggten Kurse auf die
+  6 × 4 Module — anhand des Erstellungsjahres jedes Kurses (häufigster
+  Wert aus den vorhandenen Fragen) und der HS/FS-Startsemester-Logik.
+- Konservatives Verhalten: **bereits gefüllte Module werden nie
+  überschrieben** — nur leere Slots werden gefüllt. Bestätigungsdialog
+  zeigt vorab eine Statistik (X eingefügt, Y bereits vorhanden, Z
+  passte nicht) und einen klaren Hinweis, dass die Verteilung nur eine
+  Annahme ist und nachgeprüft werden sollte.
+- Neue Hilfsfunktionen `semesterCalendarFor(program)` und
+  `autofillModulesForProgram(program, courseTags, questions)` in
+  `AIMExamManager.helpers.js` mit 10 zusätzlichen Unit-Tests (43 total).
+
 ## [1.0.13] — 2026-05-18
 
 ### Hinzugefügt

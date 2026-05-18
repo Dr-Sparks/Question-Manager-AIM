@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import {
   COURSE_SLOT_COUNT,
   autoSelectQuestions,
+  autofillModulesForProgram,
   buildExportPayload,
   migrateCourseTagsFromMatrix,
   normalizeSlots,
   programsForQuestion,
+  semesterCalendarFor,
   shortProgramName,
   validateAssignment,
 } from "./AIMExamManager.helpers.js";
@@ -411,4 +413,145 @@ test("migrateCourseTagsFromMatrix: doesn't double-tag if a course appears in mul
   ];
   const out = migrateCourseTagsFromMatrix([{ id: 1, course: "Sucht" }], programs);
   assert.deepEqual(out["Sucht"], ["p1"]);
+});
+
+// ── semesterCalendarFor ──────────────────────────────────────────────────
+
+test("semesterCalendarFor HS-start: 6 semesters span 3 calendar years", () => {
+  const cal = semesterCalendarFor({ startYear: "2024", startTerm: "HS" });
+  assert.deepEqual(cal, [
+    { term: "HS", year: "2024" },
+    { term: "FS", year: "2025" },
+    { term: "HS", year: "2025" },
+    { term: "FS", year: "2026" },
+    { term: "HS", year: "2026" },
+    { term: "FS", year: "2027" },
+  ]);
+});
+
+test("semesterCalendarFor FS-start: FS comes first within each calendar year", () => {
+  const cal = semesterCalendarFor({ startYear: "2025", startTerm: "FS" });
+  assert.deepEqual(cal, [
+    { term: "FS", year: "2025" },
+    { term: "HS", year: "2025" },
+    { term: "FS", year: "2026" },
+    { term: "HS", year: "2026" },
+    { term: "FS", year: "2027" },
+    { term: "HS", year: "2027" },
+  ]);
+});
+
+test("semesterCalendarFor falls back to current year when startYear is invalid", () => {
+  const cal = semesterCalendarFor({ startYear: "", startTerm: "HS" });
+  assert.equal(cal.length, 6);
+  const currentYear = new Date().getFullYear();
+  assert.equal(cal[0].year, String(currentYear));
+});
+
+// ── autofillModulesForProgram ────────────────────────────────────────────
+
+const programForAutofill = {
+  id: "p1",
+  name: "WBS Test",
+  startYear: "2024",
+  startTerm: "HS",
+  semesters: [
+    { sem: 1, modules: [{}, {}, {}, {}] },
+    { sem: 2, modules: [{}, {}, {}, {}] },
+    { sem: 3, modules: [{}, {}, {}, {}] },
+    { sem: 4, modules: [{}, {}, {}, {}] },
+    { sem: 5, modules: [{}, {}, {}, {}] },
+    { sem: 6, modules: [{}, {}, {}, {}] },
+  ],
+};
+
+test("autofillModulesForProgram returns null when no courses are tagged", () => {
+  assert.equal(autofillModulesForProgram(programForAutofill, {}, []), null);
+});
+
+test("autofillModulesForProgram fills empty modules with tagged courses", () => {
+  const courseTags = { Sucht: ["p1"], ACT: ["p1"] };
+  const questions = [
+    { course: "Sucht", year: "2024", lecturer: "Dr. Petry" },
+    { course: "ACT", year: "2025", lecturer: "J. Behr" },
+  ];
+  const result = autofillModulesForProgram(programForAutofill, courseTags, questions);
+  assert.equal(result.stats.placed, 2);
+  // Sucht (year 2024) → semester 1 (HS 2024)
+  const placedCourses = result.semesters.flatMap((s) =>
+    s.modules.filter((m) => m.course).map((m) => m.course)
+  );
+  assert.ok(placedCourses.includes("Sucht"));
+  assert.ok(placedCourses.includes("ACT"));
+});
+
+test("autofillModulesForProgram preserves existing modules — never overwrites", () => {
+  const programWithExisting = {
+    ...programForAutofill,
+    semesters: [
+      { sem: 1, modules: [{ course: "Existing", year: "2024", lecturer: "Existing-L" }, {}, {}, {}] },
+      { sem: 2, modules: [{}, {}, {}, {}] },
+      { sem: 3, modules: [{}, {}, {}, {}] },
+      { sem: 4, modules: [{}, {}, {}, {}] },
+      { sem: 5, modules: [{}, {}, {}, {}] },
+      { sem: 6, modules: [{}, {}, {}, {}] },
+    ],
+  };
+  const courseTags = { Sucht: ["p1"] };
+  const questions = [{ course: "Sucht", year: "2024", lecturer: "Dr. Petry" }];
+  const result = autofillModulesForProgram(programWithExisting, courseTags, questions);
+  // "Existing" remains untouched
+  assert.equal(result.semesters[0].modules[0].course, "Existing");
+  // "Sucht" lands in one of the empty slots (year 2024 → semester 1)
+  assert.equal(result.semesters[0].modules[1].course, "Sucht");
+});
+
+test("autofillModulesForProgram skips courses that are already present in the matrix", () => {
+  const programAlreadyHasSucht = {
+    ...programForAutofill,
+    semesters: [
+      { sem: 1, modules: [{ course: "Sucht", year: "2024", lecturer: "Dr. Petry" }, {}, {}, {}] },
+      { sem: 2, modules: [{}, {}, {}, {}] },
+      { sem: 3, modules: [{}, {}, {}, {}] },
+      { sem: 4, modules: [{}, {}, {}, {}] },
+      { sem: 5, modules: [{}, {}, {}, {}] },
+      { sem: 6, modules: [{}, {}, {}, {}] },
+    ],
+  };
+  const courseTags = { Sucht: ["p1"] };
+  const result = autofillModulesForProgram(programAlreadyHasSucht, courseTags, []);
+  assert.equal(result.stats.placed, 0);
+  assert.equal(result.stats.alreadyPresent, 1);
+});
+
+test("autofillModulesForProgram: course preferred year unmatched → fallback to first empty slot", () => {
+  // Course whose year is "1990" doesn't match any of the 2024-2027 semesters.
+  const courseTags = { OldCourse: ["p1"] };
+  const questions = [{ course: "OldCourse", year: "1990", lecturer: "Prof. X" }];
+  const result = autofillModulesForProgram(programForAutofill, courseTags, questions);
+  assert.equal(result.stats.placed, 1);
+  // Falls back to the very first slot
+  assert.equal(result.semesters[0].modules[0].course, "OldCourse");
+});
+
+test("autofillModulesForProgram: more courses than slots → marks the rest as skipped", () => {
+  // 30 courses but only 24 slots
+  const courseTags = {};
+  for (let i = 0; i < 30; i++) courseTags["Course_" + i] = ["p1"];
+  const result = autofillModulesForProgram(programForAutofill, courseTags, []);
+  assert.equal(result.stats.placed, 24);
+  assert.equal(result.stats.skipped, 6);
+});
+
+test("autofillModulesForProgram: picks most-common year + lecturer from a course's questions", () => {
+  const courseTags = { Sucht: ["p1"] };
+  const questions = [
+    { course: "Sucht", year: "2025", lecturer: "Dr. A" },
+    { course: "Sucht", year: "2025", lecturer: "Dr. A" },
+    { course: "Sucht", year: "2024", lecturer: "Dr. B" },
+  ];
+  const result = autofillModulesForProgram(programForAutofill, courseTags, questions);
+  const placed = result.semesters.flatMap((s) => s.modules).find((m) => m.course === "Sucht");
+  assert.equal(placed.year, "2025"); // 2× wins over 1×
+  assert.equal(placed.lecturer, "Dr. A");
 });

@@ -257,6 +257,126 @@ function migrateCourseTagsFromMatrix(questions,programs){
   return out;
 }
 
+// Compute each semester's expected (term, year) given a WBG's start. Used
+// by autofill to place a course in the semester whose academic year matches
+// the course's most-common year.
+//   HS-Start (Y): sem 1=HS Y, 2=FS Y+1, 3=HS Y+1, 4=FS Y+2, 5=HS Y+2, 6=FS Y+3
+//   FS-Start (Y): sem 1=FS Y, 2=HS Y,   3=FS Y+1, 4=HS Y+1, 5=FS Y+2, 6=HS Y+2
+function semesterCalendarFor(program){
+  const yearRaw=Number(program.startYear);
+  const baseYear=Number.isFinite(yearRaw)&&yearRaw>1900?yearRaw:Number(currentAcademicTag().year);
+  const startIsHS=program.startTerm==='HS';
+  const out=[];
+  for(let i=0;i<SEMESTER_COUNT;i++){
+    let term,year;
+    if(startIsHS){
+      term=i%2===0?'HS':'FS';
+      year=baseYear+Math.ceil(i/2);
+    }else{
+      term=i%2===0?'FS':'HS';
+      year=baseYear+Math.floor(i/2);
+    }
+    out.push({term,year:String(year)});
+  }
+  return out;
+}
+
+// Best-effort autofill of a WBG's 6x4 module matrix from the courses tagged
+// for that WBG. Existing modules are PRESERVED — only empty slots get
+// filled. Each tagged course picks up its most-common (year, lecturer)
+// values from existing questions in the database, then lands in the
+// semester whose calendar year matches, falling back to the first empty
+// slot anywhere. Returns { semesters, stats } or null if there are no
+// tagged courses at all.
+//
+// Limitations (surfaced to the user via Hinweis text):
+//   - Questions don't track HS vs FS within a year, so within a year we
+//     just take the first matching semester (sem 1 if HS-start, sem 1 if
+//     FS-start — both fit year Y).
+//   - If multiple tagged courses share a year, alphabetical fills
+//     ascending — won't always match the institute's actual teaching plan.
+//   - Skips courses already present anywhere in the matrix.
+function autofillModulesForProgram(program,courseTags,questions){
+  if(!program || !courseTags) return null;
+  const programId=String(program.id);
+  const taggedCourses=Object.entries(courseTags)
+    .filter(([_,ids])=>Array.isArray(ids)&&ids.map(String).includes(programId))
+    .map(([course])=>course);
+  if(!taggedCourses.length) return null;
+
+  // Determine each tagged course's preferred (year, lecturer) from the
+  // database. Pick the most-common values across questions of that course.
+  const mostCommon=obj=>{
+    const entries=Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+    return entries[0]?.[0]||'';
+  };
+  const courseMeta={};
+  for(const course of taggedCourses){
+    const qs=(questions||[]).filter(q=>q.course===course);
+    const yC={}; const lC={};
+    qs.forEach(q=>{
+      if(q.year) yC[q.year]=(yC[q.year]||0)+1;
+      if(q.lecturer) lC[q.lecturer]=(lC[q.lecturer]||0)+1;
+    });
+    courseMeta[course]={year:mostCommon(yC),lecturer:mostCommon(lC)};
+  }
+
+  // Calendar for this WBG: { sem index → expected year string }
+  const calendar=semesterCalendarFor(program);
+
+  // Work on a deep-ish copy so we don't mutate the input
+  const newSemesters=(program.semesters||[]).map(s=>({
+    sem:s.sem,
+    modules:(s.modules||[]).map(m=>({...m})),
+  }));
+
+  // Sort by year ascending (blank year last), alphabetical tie-break.
+  const sortedCourses=[...taggedCourses].sort((a,b)=>{
+    const yA=courseMeta[a].year||'9999';
+    const yB=courseMeta[b].year||'9999';
+    if(yA!==yB) return yA.localeCompare(yB);
+    return a.localeCompare(b);
+  });
+
+  const stats={placed:0,alreadyPresent:0,skipped:0};
+  const placedInSemester=[]; // for the toast detail
+  for(const course of sortedCourses){
+    // If this course is already a module somewhere in the matrix, skip.
+    const present=newSemesters.some(s=>(s.modules||[]).some(m=>m.course===course));
+    if(present){ stats.alreadyPresent++; continue; }
+
+    const meta=courseMeta[course];
+    let targetSemIdx=-1;
+    // Prefer the semester whose academic year matches the course's preferred year.
+    if(meta.year){
+      for(let i=0;i<calendar.length;i++){
+        if(calendar[i].year===meta.year){
+          const emptyIdx=newSemesters[i].modules.findIndex(m=>!m.course);
+          if(emptyIdx!==-1){ targetSemIdx=i; break; }
+        }
+      }
+    }
+    // Fallback: first empty slot anywhere.
+    if(targetSemIdx===-1){
+      for(let i=0;i<newSemesters.length;i++){
+        const emptyIdx=newSemesters[i].modules.findIndex(m=>!m.course);
+        if(emptyIdx!==-1){ targetSemIdx=i; break; }
+      }
+    }
+    if(targetSemIdx===-1){ stats.skipped++; continue; }
+    const emptyIdx=newSemesters[targetSemIdx].modules.findIndex(m=>!m.course);
+    newSemesters[targetSemIdx].modules[emptyIdx]={
+      course,
+      year:meta.year||'',
+      lecturer:meta.lecturer||'',
+    };
+    placedInSemester.push({course,sem:targetSemIdx+1});
+    stats.placed++;
+  }
+
+  return {semesters:newSemesters,stats,placedInSemester};
+}
+
 const emptyModule=()=>({year:'',lecturer:'',course:''});
 const emptySemester=n=>({sem:n,modules:Array.from({length:MODULES_PER_SEMESTER},()=>emptyModule())});
 const createProgram=(id,name,startYear=currentAcademicTag().year,startTerm=currentAcademicTag().term)=>({
@@ -2175,7 +2295,7 @@ function GridInput({value,onChange,placeholder,list,locked}){
   );
 }
 
-function SemesterMatrix({programs,questions,courseTags={},mode='manage',onProgramsChange,selectedProgramId,selectedModuleKeys,onSelectProgram,onToggleModule,onDeleteProgram,locked=false,scale=100,compact=false}){
+function SemesterMatrix({programs,questions,courseTags={},mode='manage',onProgramsChange,selectedProgramId,selectedModuleKeys,onSelectProgram,onToggleModule,onDeleteProgram,onAutofillProgram,locked=false,scale=100,compact=false}){
   const courses=useMemo(()=>[...new Set(questions.map(q=>q.course))].sort(),[questions]);
   const prefillForCourse=course=>{const match=questions.find(q=>q.course===course);return match?{year:match.year||'',lecturer:match.lecturer||''}:{year:'',lecturer:''};};
   const updateProgram=(programId,updater)=>onProgramsChange?.(prev=>prev.map(p=>p.id===programId?updater(p):p));
@@ -2263,7 +2383,12 @@ function SemesterMatrix({programs,questions,courseTags={},mode='manage',onProgra
                                   </>
                                 )}
                               </div>
-                              {!locked&&<Btn ch="✕ Löschen" onClick={()=>onDeleteProgram?.(p.id)} v="danger" sm/>}
+                              {!locked&&(
+                                <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                                  <Btn ch="✨ Auto-Füllen" onClick={()=>onAutofillProgram?.(p.id)} v="secondary" sm title="Leere Module aus den dem Weiterbildungsgang zugeordneten Kursen auffüllen"/>
+                                  <Btn ch="✕ Löschen" onClick={()=>onDeleteProgram?.(p.id)} v="danger" sm/>
+                                </div>
+                              )}
                             </div>
                           ):(
                             <button onClick={()=>onSelectProgram?.(p.id)} style={{background:'transparent',border:'none',padding:0,cursor:'pointer',width:'100%',textAlign:'left'}}>
@@ -2490,6 +2615,43 @@ export function Programs({programs,setPrograms,questions,courseTags={},showToast
       },
     });
   };
+  const autofillProgram=id=>{
+    const prog=programs.find(p=>p.id===id);
+    if(!prog){showToast('Weiterbildungsgang nicht gefunden.','error');return;}
+    const result=autofillModulesForProgram(prog,courseTags,questions);
+    if(!result){
+      showConfirm({
+        message:`„${prog.name}" hat keine zugeordneten Kurse. Erst in „Kurs Übersicht" Tags für diesen Weiterbildungsgang setzen, dann kann das Auto-Füllen die zugeordneten Kurse auf die Semester verteilen.`,
+        confirmLabel:'Verstanden',
+        confirmV:'primary',
+        onConfirm:()=>{},
+      });
+      return;
+    }
+    const {semesters:newSemesters,stats}=result;
+    if(stats.placed===0){
+      showToast(`„${prog.name}": ${stats.alreadyPresent} Kurse sind bereits im Plan${stats.skipped?', '+stats.skipped+' Kurse passten in kein freies Modul':''}. Nichts zu tun.`,'warning');
+      return;
+    }
+    const lines=[
+      `Auto-Füllen für „${prog.name}":`,
+      '',
+      `  • ${stats.placed} Kurs(e) werden in leere Module eingefügt`,
+    ];
+    if(stats.alreadyPresent) lines.push(`  • ${stats.alreadyPresent} Kurs(e) sind bereits vorhanden und werden übersprungen`);
+    if(stats.skipped) lines.push(`  • ${stats.skipped} Kurs(e) passten in kein freies Modul`);
+    lines.push('','Vorhandene Einträge in der Matrix werden NICHT überschrieben.','');
+    lines.push('Hinweis: Die Verteilung ist eine Annahme — diese Funktion arbeitet nicht immer perfekt. Bitte die Semester und Module nach dem Einfügen nochmals überprüfen.');
+    showConfirm({
+      message:lines.join('\n'),
+      confirmLabel:'Auto-Füllen',
+      confirmV:'primary',
+      onConfirm:()=>{
+        setPrograms(prev=>prev.map(p=>p.id===id?{...p,semesters:newSemesters}:p));
+        showToast(`Auto-Füllen abgeschlossen: ${stats.placed} Kurse eingefügt.`,'success');
+      },
+    });
+  };
   const filteredPrograms=programs.filter(p=>!search.trim()||p.name.toLowerCase().includes(search.toLowerCase()));
 
   return(
@@ -2532,7 +2694,7 @@ export function Programs({programs,setPrograms,questions,courseTags={},showToast
         <div style={{fontSize:'12px',color:'var(--c-mu)'}}>{compact?'Kompaktansicht aktiv · Kursnamen werden abgekürzt angezeigt.':'6 Semester · 4 Module pro Semester'}</div>
         <input style={{...inp,width:260}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Weiterbildungsgang suchen…"/>
       </div>
-      <SemesterMatrix programs={filteredPrograms} questions={questions} courseTags={courseTags} mode="manage" onProgramsChange={setPrograms} onDeleteProgram={delProgram} locked={locked} scale={scale} compact={compact}/>
+      <SemesterMatrix programs={filteredPrograms} questions={questions} courseTags={courseTags} mode="manage" onProgramsChange={setPrograms} onDeleteProgram={delProgram} onAutofillProgram={autofillProgram} locked={locked} scale={scale} compact={compact}/>
     </div>
   );
 }
