@@ -5,6 +5,7 @@ import {
   autoSelectQuestions,
   autofillModulesForProgram,
   buildExportPayload,
+  computeExcelImportDiff,
   migrateCourseTagsFromMatrix,
   normalizeSlots,
   programsForQuestion,
@@ -554,4 +555,149 @@ test("autofillModulesForProgram: picks most-common year + lecturer from a course
   const placed = result.semesters.flatMap((s) => s.modules).find((m) => m.course === "Sucht");
   assert.equal(placed.year, "2025"); // 2× wins over 1×
   assert.equal(placed.lecturer, "Dr. A");
+});
+
+// ── computeExcelImportDiff (v1.0.15) ────────────────────────────────────────
+// The diff function is the safety surface for Excel round-trip. Each test
+// pins one promise we make to the user: no surprise deletions, ID is the
+// join key, missing-required-field becomes a conflict not a crash.
+
+const makeQ = (overrides = {}) => ({
+  id: "q1",
+  year: "2024",
+  location: "Zurich",
+  lecturer: "Dr. A",
+  course: "Math",
+  format: "Single Choice",
+  question: "What is 2+2?",
+  optA: "3",
+  optB: "4",
+  optC: "5",
+  optD: "",
+  optE: "",
+  answer: "B",
+  ...overrides,
+});
+
+test("computeExcelImportDiff: identical question → unchanged", () => {
+  const q = makeQ();
+  const diff = computeExcelImportDiff({ questions: [q] }, { questions: [q] });
+  assert.equal(diff.questions.unchanged.length, 1);
+  assert.equal(diff.questions.add.length, 0);
+  assert.equal(diff.questions.update.length, 0);
+});
+
+test("computeExcelImportDiff: edited question → update with before+after", () => {
+  const before = makeQ({ question: "Old text" });
+  const after = makeQ({ question: "New text" });
+  const diff = computeExcelImportDiff({ questions: [after] }, { questions: [before] });
+  assert.equal(diff.questions.update.length, 1);
+  assert.equal(diff.questions.update[0].before.question, "Old text");
+  assert.equal(diff.questions.update[0].after.question, "New text");
+});
+
+test("computeExcelImportDiff: question with empty ID is treated as new", () => {
+  const fresh = makeQ({ id: "" });
+  const diff = computeExcelImportDiff({ questions: [fresh] }, { questions: [] });
+  assert.equal(diff.questions.add.length, 1);
+  assert.equal(diff.questions.add[0].id, "");
+});
+
+test("computeExcelImportDiff: question missing required fields → conflict (not crash)", () => {
+  const bad = makeQ({ course: "", id: "" });
+  const diff = computeExcelImportDiff({ questions: [bad] }, { questions: [] });
+  assert.equal(diff.conflicts.length, 1);
+  assert.equal(diff.conflicts[0].type, "question");
+  assert.equal(diff.questions.add.length, 0);
+});
+
+test("computeExcelImportDiff: parsed missing rows are NEVER deleted (the core contract)", () => {
+  // Current has 3 questions, parsed has 0 → diff should show nothing,
+  // because never-delete means rows simply don't appear in the diff.
+  const a = makeQ({ id: "q1" });
+  const b = makeQ({ id: "q2", question: "Q2" });
+  const c = makeQ({ id: "q3", question: "Q3" });
+  const diff = computeExcelImportDiff({ questions: [] }, { questions: [a, b, c] });
+  assert.equal(diff.questions.add.length, 0);
+  assert.equal(diff.questions.update.length, 0);
+  assert.equal(diff.questions.unchanged.length, 0);
+});
+
+test("computeExcelImportDiff: program matched by name when ID missing", () => {
+  const current = {
+    programs: [
+      {
+        id: "p1",
+        name: "WBG-A",
+        startYear: "2024",
+        startTerm: "HS",
+        semesters: [],
+      },
+    ],
+  };
+  const parsed = {
+    programs: [
+      {
+        id: null,
+        name: "WBG-A",
+        startYear: "2024",
+        startTerm: "HS",
+        semesters: [],
+      },
+    ],
+  };
+  const diff = computeExcelImportDiff(parsed, current);
+  assert.equal(diff.programs.unchanged.length, 1);
+  assert.equal(diff.programs.add.length, 0);
+});
+
+test("computeExcelImportDiff: course tag change → update, new course → add", () => {
+  const current = { courseTags: { Math: ["p1"] } };
+  const parsed = { courseTags: { Math: ["p1", "p2"], Physics: ["p1"] } };
+  const diff = computeExcelImportDiff(parsed, current);
+  assert.equal(diff.courseTags.update.length, 1);
+  assert.equal(diff.courseTags.update[0].course, "Math");
+  assert.deepEqual(diff.courseTags.update[0].after, ["p1", "p2"]);
+  assert.equal(diff.courseTags.add.length, 1);
+  assert.equal(diff.courseTags.add[0].course, "Physics");
+});
+
+test("computeExcelImportDiff: course tag list with same IDs in different order → unchanged", () => {
+  const current = { courseTags: { Math: ["p2", "p1"] } };
+  const parsed = { courseTags: { Math: ["p1", "p2"] } };
+  const diff = computeExcelImportDiff(parsed, current);
+  assert.equal(diff.courseTags.unchanged.length, 1);
+});
+
+test("computeExcelImportDiff: empty parsed → empty diff sections (no crashes)", () => {
+  const diff = computeExcelImportDiff({}, {});
+  assert.equal(diff.questions.add.length, 0);
+  assert.equal(diff.programs.add.length, 0);
+  assert.equal(diff.courseTags.add.length, 0);
+  assert.equal(diff.savedExams.add.length, 0);
+  assert.equal(diff.conflicts.length, 0);
+});
+
+test("computeExcelImportDiff: saved exam matched by ID gets updated, otherwise added", () => {
+  const existing = {
+    id: "ex1",
+    name: "Exam 1",
+    programName: "WBG-A",
+    questions: [makeQ()],
+  };
+  const updated = { ...existing, name: "Exam 1 (revised)" };
+  const novel = {
+    id: "ex2",
+    name: "Exam 2",
+    programName: "WBG-B",
+    questions: [makeQ({ id: "q-novel" })],
+  };
+  const diff = computeExcelImportDiff(
+    { savedExams: [updated, novel] },
+    { savedExams: [existing] }
+  );
+  assert.equal(diff.savedExams.update.length, 1);
+  assert.equal(diff.savedExams.update[0].after.name, "Exam 1 (revised)");
+  assert.equal(diff.savedExams.add.length, 1);
+  assert.equal(diff.savedExams.add[0].id, "ex2");
 });

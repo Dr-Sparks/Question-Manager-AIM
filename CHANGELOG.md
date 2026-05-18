@@ -4,6 +4,48 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.15] — 2026-05-18
+
+### Hinzugefügt
+- **Verlässlicher Excel-Roundtrip** (Export → in Excel bearbeiten →
+  re-importieren). Die exportierte `.xlsx` enthält jetzt sechs Sheets:
+  - **README** mit den Spielregeln (deutsch) zum Bearbeiten und Re-Import.
+  - **Fragen** — mit einer **ID-Spalte ganz vorne**. ID ist der Schlüssel
+    für den Re-Import: vorhandene ID = Eintrag wird aktualisiert, leere
+    ID in einer neuen Zeile = neuer Eintrag bekommt beim Import eine ID.
+  - **Kurs Übersicht** — eine Zeile pro Kurs, eine Spalte pro
+    Weiterbildungsgang („WBG: …"). `x` = Kurs ist für diesen WBG
+    getaggt. Beim Re-Import wird die Tag-Zuordnung übernommen.
+  - **Weiterbildungsgänge** — Metadaten (ID, Name, Startjahr,
+    Startsemester) für stabilen ID-Roundtrip.
+  - **Semesteransicht** — die bekannte 6 × 4-Matrix.
+  - **Gespeicherte Prüfungen** — wie bisher.
+- **Vorschau-Dialog vor jedem Excel-Import**. Statt die DB direkt zu
+  überschreiben, zeigt der Import nun eine Vorschau mit pro Kategorie
+  *Neu / Aktualisiert / Unverändert* sowie eine Konfliktliste (z.B.
+  Frage ohne Kurs oder Frage-Text). Erst nach Klick auf „Anwenden"
+  werden Daten gemerged.
+- Frozen Header und Auto-Filter in der Fragen- und Kurs-Übersicht-
+  Tabelle für angenehmeres Editieren in Excel/Numbers.
+
+### Verändert
+- **Excel-Import löscht NICHTS mehr.** Frühere Versionen ersetzten die
+  bestehende Datenbank vollständig durch den Inhalt der Excel-Datei.
+  Ab v1.0.15 ist der Import ein **Merge per ID** — Zeilen, die in der
+  Excel fehlen, bleiben in der App erhalten. Wer Einträge löschen will,
+  macht das weiterhin direkt in der App.
+- Vor jedem Import wird automatisch ein Snapshot des aktuellen Stands
+  in `aim_last_backup` geschrieben — „↺ Letzten Stand wiederherstellen"
+  auf dem Dashboard macht den Import damit jederzeit rückgängig.
+
+### Intern
+- Neue reine Funktion `computeExcelImportDiff(parsed, current)` in
+  `AIMExamManager.helpers.js` mit 10 zusätzlichen Unit-Tests (53 total).
+- Neue Pipeline-Funktionen im Monolithen: `parseExcelImport(buffer)`,
+  `computeExcelImportDiff(parsed, current)`, `applyExcelImport(diff, …)`
+  ersetzen das alte `importExcel(file, …)`.
+- Neue UI-Komponente `ExcelImportPreviewModal`.
+
 ## [1.0.14] — 2026-05-18
 
 ### Hinzugefügt

@@ -200,6 +200,125 @@ export function autofillModulesForProgram(program, courseTags, questions) {
   return { semesters: newSemesters, stats };
 }
 
+// ─── v1.0.15 Excel round-trip — diff core ───────────────────────────────────
+// Pure function that compares parsed Excel data against current app state
+// and returns {add, update, unchanged} per category plus a conflicts list.
+// Mirrors `computeExcelImportDiff` in AIMExamManager.jsx — if you change one,
+// update the other so the tests stay meaningful.
+//
+// Contract:
+//   - Never deletes anything. Rows missing in `parsed` are simply absent
+//     from the diff; the app keeps its current copy.
+//   - Match strategy:
+//       questions  → by id (string compare)
+//       programs   → by id, else by name
+//       courseTags → by course name
+//       savedExams → by id
+//   - "unchanged" detection is field-level — if every comparable field
+//     matches, the row is unchanged. Otherwise it's an update.
+export function computeExcelImportDiff(parsed, current) {
+  const diff = {
+    questions: { add: [], update: [], unchanged: [] },
+    programs: { add: [], update: [], unchanged: [] },
+    courseTags: { add: [], update: [], unchanged: [] },
+    savedExams: { add: [], update: [], unchanged: [] },
+    conflicts: [],
+  };
+
+  const sameQuestion = (a, b) =>
+    a.year === b.year &&
+    a.location === b.location &&
+    a.lecturer === b.lecturer &&
+    a.course === b.course &&
+    a.format === b.format &&
+    a.question === b.question &&
+    a.optA === b.optA &&
+    a.optB === b.optB &&
+    a.optC === b.optC &&
+    a.optD === b.optD &&
+    a.optE === b.optE &&
+    a.answer === b.answer;
+
+  const sameProgram = (a, b) =>
+    a.name === b.name &&
+    a.startYear === b.startYear &&
+    a.startTerm === b.startTerm &&
+    JSON.stringify(a.semesters || []) === JSON.stringify(b.semesters || []);
+
+  // Questions
+  const currentQById = new Map((current.questions || []).map((q) => [String(q.id), q]));
+  (parsed.questions || []).forEach((q) => {
+    if (!q.course || !q.question) {
+      diff.conflicts.push({ type: "question", reason: "Pflichtfeld fehlt (Kurs oder Frage)", row: q });
+      return;
+    }
+    if (q.id && currentQById.has(String(q.id))) {
+      const existing = currentQById.get(String(q.id));
+      const merged = { ...existing, ...q, id: existing.id };
+      if (sameQuestion(existing, merged)) diff.questions.unchanged.push(merged);
+      else diff.questions.update.push({ before: existing, after: merged });
+    } else {
+      diff.questions.add.push({ ...q, id: "" });
+    }
+  });
+
+  // Programs
+  const currentPById = new Map((current.programs || []).map((p) => [String(p.id), p]));
+  const currentPByName = new Map((current.programs || []).map((p) => [p.name, p]));
+  (parsed.programs || []).forEach((p) => {
+    if (!p.name) {
+      diff.conflicts.push({ type: "program", reason: "Name fehlt", row: p });
+      return;
+    }
+    let existing = p.id ? currentPById.get(String(p.id)) : null;
+    if (!existing) existing = currentPByName.get(p.name) || null;
+    if (existing) {
+      const merged = { ...existing, ...p, id: existing.id, semesters: p.semesters || existing.semesters };
+      if (sameProgram(existing, merged)) diff.programs.unchanged.push(merged);
+      else diff.programs.update.push({ before: existing, after: merged });
+    } else {
+      diff.programs.add.push({ ...p, id: "" });
+    }
+  });
+
+  // Course tags
+  const currentTags = current.courseTags || {};
+  Object.entries(parsed.courseTags || {}).forEach(([course, ids]) => {
+    const before = (currentTags[course] || []).map(String).sort();
+    const after = (ids || []).map(String).sort();
+    if (before.join("|") === after.join("|")) {
+      diff.courseTags.unchanged.push({ course, ids: after });
+    } else if (!currentTags[course]) {
+      diff.courseTags.add.push({ course, ids: after });
+    } else {
+      diff.courseTags.update.push({ course, before, after });
+    }
+  });
+
+  // Saved exams
+  const currentExamById = new Map((current.savedExams || []).map((e) => [String(e.id), e]));
+  (parsed.savedExams || []).forEach((exam) => {
+    if (exam.id && currentExamById.has(String(exam.id))) {
+      const existing = currentExamById.get(String(exam.id));
+      if (
+        JSON.stringify(existing.questions) === JSON.stringify(exam.questions) &&
+        existing.name === exam.name
+      ) {
+        diff.savedExams.unchanged.push(existing);
+      } else {
+        diff.savedExams.update.push({
+          before: existing,
+          after: { ...existing, ...exam, id: existing.id },
+        });
+      }
+    } else {
+      diff.savedExams.add.push(exam);
+    }
+  });
+
+  return diff;
+}
+
 export function buildExportPayload({
   weiterbildungsgang,
   selectedAssignments,

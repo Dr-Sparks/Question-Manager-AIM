@@ -638,39 +638,172 @@ function buildProgramsFromSemesterSheet(ws,pRows=[]){
   return Array.from(programMap.values());
 }
 
-function exportExcel(questions, programs, savedExams=[]){
+// ─── Excel round-trip (v1.0.15) ───────────────────────────────────────────
+// The export produces a self-documenting workbook with ID columns
+// throughout so the import can detect updates vs new rows reliably.
+
+// Sheet 1: README. Plain text help that opens to the user when they open the
+// Excel file in any spreadsheet program. Explains what each sheet does and
+// the editing rules.
+function buildReadmeSheet(){
+  const rows=[
+    ['AIM Pruefungs-Manager — Excel Backup'],
+    [],
+    [`Exportiert am ${new Date().toLocaleString('de-CH')}`],
+    [],
+    ['DIESE DATEI BEARBEITEN'],
+    ['Du kannst diese Excel-Datei bearbeiten und sie danach im AIM Pruefungs-Manager wieder importieren.'],
+    ['(Dashboard → "Excel importieren").'],
+    [],
+    ['REGELN'],
+    ['1. Die Spalte "ID" identifiziert jeden Eintrag eindeutig. NICHT veraendern.'],
+    ['   • Zeile mit vorhandener ID → wird beim Import aktualisiert.'],
+    ['   • Zeile mit leerer ID → wird als NEU hinzugefuegt (App vergibt eine ID).'],
+    ['   • Geloeschte Zeile in Excel → bleibt im App-Bestand bestehen (KEIN Loeschen via Excel).'],
+    [],
+    ['2. Vor dem Import wird automatisch eine Sicherung des aktuellen Standes erstellt.'],
+    ['   Du kannst auf dem Dashboard mit "Letzten Stand wiederherstellen" zurueckspulen.'],
+    [],
+    ['3. Beim Import zeigt die App eine Vorschau (X neu, Y aktualisiert, Z unveraendert).'],
+    ['   Erst nach Bestaetigung werden die Aenderungen uebernommen.'],
+    [],
+    ['SHEETS IN DIESER DATEI'],
+    ['• Fragen — eine Zeile pro Pruefungsfrage'],
+    ['• Kurs Uebersicht — pro Kurs die zugeordneten Weiterbildungsgaenge (Spalte je WBG, "x" = zugeordnet)'],
+    ['• Weiterbildungsgaenge — die 6×4-Modulmatrix je Programm'],
+    ['• Gespeicherte Pruefungen — frueher gespeicherte Pruefungen mit Fragen'],
+    [],
+    ['AENDERN, NICHT EINFUEGEN'],
+    ['Wenn du in der Fragen-Tabelle Zellen aendern willst, einfach den Wert ueberschreiben.'],
+    ['Beim Re-Import aktualisiert die App die Frage anhand der ID.'],
+    [],
+    ['NEUE ZEILE HINZUFUEGEN'],
+    ['Spalte "ID" leer lassen — die App vergibt eine ID beim Import.'],
+    ['Pflichtfelder: Kurs, Frage, Korrekte Antwort(en).'],
+    [],
+    ['HINWEIS'],
+    ['Diese Datei ist KEIN ZIP-Backup. Hilfe-Inhalte und Bilder werden via "JSON exportieren" gesichert.'],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:80}];
+  return ws;
+}
+
+// Sheet "Kurs Uebersicht" — one row per unique course, with one column per
+// Weiterbildungsgang. Cell value "x" means the course is tagged for that
+// WBG, empty means not. This is the round-trip surface for editing tags
+// in Excel.
+function buildCourseTagsSheetRows(questions, programs, courseTags){
+  const courseMap=new Map();
+  (questions||[]).forEach(q=>{
+    if(!q.course) return;
+    if(!courseMap.has(q.course)) courseMap.set(q.course,{course:q.course,lecturers:new Set(),years:new Set(),count:0});
+    const info=courseMap.get(q.course);
+    info.count++;
+    if(q.lecturer) info.lecturers.add(q.lecturer);
+    if(q.year) info.years.add(q.year);
+  });
+  const rows=[...courseMap.values()].sort((a,b)=>a.course.localeCompare(b.course)).map(info=>{
+    const out={
+      'Kurs':info.course,
+      'Dozent/in (haeufigster)':info.lecturers.size===1?[...info.lecturers][0]:info.lecturers.size>1?'mehrere':'',
+      'Jahr (haeufigstes)':info.years.size===1?[...info.years][0]:info.years.size>1?'mehrere':'',
+      'Anzahl Fragen':info.count,
+    };
+    const tags=(courseTags||{})[info.course]||[];
+    const idSet=new Set(tags.map(String));
+    (programs||[]).forEach(p=>{
+      out[`WBG: ${p.name}`]=idSet.has(String(p.id))?'x':'';
+    });
+    return out;
+  });
+  return rows;
+}
+
+// Parse the Kurs Uebersicht sheet back into a courseTags map. Returns
+// { courseTags: {[course]: [wbgId, ...]}, courses: [course names seen] }
+function readCourseTagsFromSheet(ws, programs){
+  if(!ws) return {courseTags:{},courses:[]};
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+  const tags={};
+  const courses=[];
+  // Map "WBG: <name>" column back to program ID via name match
+  const programByName=new Map((programs||[]).map(p=>[p.name,p.id]));
+  rows.forEach(r=>{
+    const course=String(r['Kurs']||'').trim();
+    if(!course) return;
+    courses.push(course);
+    const ids=[];
+    Object.entries(r).forEach(([key,value])=>{
+      if(!key.startsWith('WBG: ')) return;
+      const name=key.slice(5);
+      const id=programByName.get(name);
+      if(!id) return;
+      const cell=String(value||'').trim().toLowerCase();
+      if(cell==='x'||cell==='ja'||cell==='yes'||cell==='true'||cell==='1') ids.push(String(id));
+    });
+    tags[course]=ids;
+  });
+  return {courseTags:tags,courses};
+}
+
+// Sheet "Weiterbildungsgaenge" — full program metadata with ID + start info
+function buildProgramsMetaSheet(programs){
+  const rows=(programs||[]).map(p=>({
+    'ID':p.id??'',
+    'Name':p.name||'',
+    'Startjahr':p.startYear||'',
+    'Startsemester':p.startTerm||'',
+  }));
+  const ws=XLSX.utils.json_to_sheet(rows.length?rows:[{'ID':'','Name':'','Startjahr':'','Startsemester':''}]);
+  ws['!cols']=[{wch:32},{wch:32},{wch:12},{wch:14}];
+  ws['!freeze']={xSplit:0,ySplit:1,topLeftCell:'A2',activePane:'bottomLeft',state:'frozen'};
+  ws['!autofilter']={ref:`A1:D${Math.max(1,rows.length)+1}`};
+  return ws;
+}
+
+function exportExcel(questions, programs, savedExams=[], courseTags={}){
   const wb = XLSX.utils.book_new();
 
-  // ── Sheet 1: Fragen ──────────────────────────────────────────────────────
-  const qRows = questions.map(q=>({
-    'Jahr': q.year||'',
-    'Standort': q.location||'',
-    'Dozent/in': q.lecturer||'',
-    'Kurs': q.course||'',
-    'Format': q.format||'',
-    'Frage': q.question||'',
-    'Antwort A': q.optA||'',
-    'Antwort B': q.optB||'',
-    'Antwort C': q.optC||'',
-    'Antwort D': q.optD||'',
-    'Antwort E': q.optE||'',
-    'Korrekte Antwort(en)': q.answer||'',
-  }));
-  const wsQ = XLSX.utils.json_to_sheet(qRows);
-  wsQ['!cols']=[{wch:6},{wch:10},{wch:28},{wch:52},{wch:16},{wch:80},{wch:50},{wch:50},{wch:50},{wch:50},{wch:50},{wch:20}];
+  // ── Sheet 1: README (orient the user) ────────────────────────────────────
+  XLSX.utils.book_append_sheet(wb, buildReadmeSheet(), 'README');
+
+  // ── Sheet 2: Fragen (with ID for round-trip merge) ───────────────────────
+  const qRows = buildQuestionSheetRows(questions);
+  const wsQ = XLSX.utils.json_to_sheet(qRows.length?qRows:[{
+    'ID':'','Jahr':'','Standort':'','Dozent/in':'','Kurs':'','Format':'',
+    'Frage':'','Antwort A':'','Antwort B':'','Antwort C':'','Antwort D':'',
+    'Antwort E':'','Korrekte Antwort(en)':'',
+  }]);
+  // ID column wide enough for UUID-ish strings; question column extra-wide.
+  wsQ['!cols']=[{wch:18},{wch:6},{wch:10},{wch:28},{wch:52},{wch:16},{wch:80},{wch:50},{wch:50},{wch:50},{wch:50},{wch:50},{wch:20}];
+  wsQ['!freeze']={xSplit:0,ySplit:1,topLeftCell:'A2',activePane:'bottomLeft',state:'frozen'};
+  wsQ['!autofilter']={ref:`A1:M${Math.max(1,qRows.length)+1}`};
   XLSX.utils.book_append_sheet(wb, wsQ, 'Fragen');
 
-  // ── Sheet 2: Weiterbildungsgänge ─────────────────────────────────────────
-  const pRows = programs.map(p=>({'Name':p.name,'Startjahr':p.startYear||'','Startsemester':p.startTerm||''}));
-  const wsP = XLSX.utils.json_to_sheet(pRows);
-  wsP['!cols']=[{wch:30},{wch:12},{wch:16}];
-  XLSX.utils.book_append_sheet(wb, wsP, 'Weiterbildungsgänge');
+  // ── Sheet 3: Kurs Uebersicht (per-course WBG tags, round-trip) ───────────
+  const tagRows=buildCourseTagsSheetRows(questions, programs, courseTags);
+  const wsT = XLSX.utils.json_to_sheet(tagRows.length?tagRows:[Object.fromEntries([
+    ['Kurs',''],['Dozent/in (haeufigster)',''],['Jahr (haeufigstes)',''],['Anzahl Fragen',''],
+    ...((programs||[]).map(p=>[`WBG: ${p.name}`,'']))
+  ])]);
+  const fixedCols=[{wch:52},{wch:24},{wch:14},{wch:12}];
+  const wbgCols=(programs||[]).map(()=>({wch:22}));
+  wsT['!cols']=[...fixedCols,...wbgCols];
+  wsT['!freeze']={xSplit:1,ySplit:1,topLeftCell:'B2',activePane:'bottomRight',state:'frozen'};
+  const totalCols=4+(programs||[]).length;
+  const lastCol=XLSX.utils.encode_col(Math.max(0,totalCols-1));
+  wsT['!autofilter']={ref:`A1:${lastCol}${Math.max(1,tagRows.length)+1}`};
+  XLSX.utils.book_append_sheet(wb, wsT, 'Kurs Uebersicht');
 
-  // ── Sheet 3: Semesteransicht (wie in der App) ────────────────────────────
+  // ── Sheet 4: Weiterbildungsgaenge metadata (ID for round-trip) ───────────
+  XLSX.utils.book_append_sheet(wb, buildProgramsMetaSheet(programs), 'Weiterbildungsgaenge');
+
+  // ── Sheet 5: Semesteransicht (the visible matrix; export-only) ───────────
   const wsS = buildSemesterOverviewSheet(programs);
   XLSX.utils.book_append_sheet(wb, wsS, 'Semesteransicht');
 
-  // ── Sheet 4: Gespeicherte Prüfungen ───────────────────────────────────────
+  // ── Sheet 6: Gespeicherte Pruefungen (preserved across round-trips) ──────
   const examRows=buildSavedExamSheetRows(savedExams);
   const wsE = XLSX.utils.json_to_sheet(examRows.length?examRows:[{
     'Prüfungs-ID':'',
@@ -692,7 +825,8 @@ function exportExcel(questions, programs, savedExams=[]){
     'Korrekte Antwort(en)':'',
   }]);
   wsE['!cols']=[{wch:22},{wch:28},{wch:28},{wch:22},{wch:10},{wch:6},{wch:10},{wch:26},{wch:38},{wch:16},{wch:80},{wch:40},{wch:40},{wch:40},{wch:40},{wch:40},{wch:20}];
-  XLSX.utils.book_append_sheet(wb, wsE, 'Gespeicherte Prüfungen');
+  wsE['!freeze']={xSplit:0,ySplit:1,topLeftCell:'A2',activePane:'bottomLeft',state:'frozen'};
+  XLSX.utils.book_append_sheet(wb, wsE, 'Gespeicherte Pruefungen');
 
   const buf = XLSX.write(wb,{bookType:'xlsx',type:'array'});
   dlFile(buf,`AIM_Backup_${new Date().toISOString().slice(0,10)}.xlsx`,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -870,91 +1004,264 @@ function readSavedExamsFromSheet(ws){
   return [...grouped.values()].filter(savedExam=>savedExam.questions.length>0);
 }
 
-function importExcel(file, setQuestions, setPrograms, setSavedExams, showToast, normalizePrograms){
+// Parse a Programs metadata sheet (the new "Weiterbildungsgaenge" sheet
+// produced by buildProgramsMetaSheet). Returns an array of program-shaped
+// objects with IDs preserved when present in the sheet.
+function readProgramsMetaFromSheet(ws){
+  if(!ws) return [];
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+  return rows
+    .filter(r=>String(r['Name']||'').trim())
+    .map(r=>({
+      id: String(r['ID']||'').trim() || null,
+      name: String(r['Name']||'').trim(),
+      startYear: String(r['Startjahr']||''),
+      startTerm: String(r['Startsemester']||'HS')==='FS'?'FS':'HS',
+    }));
+}
+
+// ─── v1.0.15 Excel round-trip pipeline ───────────────────────────────────────
+// The flow is: parse → diff against current state → preview → apply (with
+// auto-backup). This is the single source of truth for `Excel importieren`.
+// Each step is a pure-ish function so the preview dialog can render counts
+// before any state changes.
+
+// parseExcelImport(arrayBuffer) → { questions, programs, courseTags, savedExams }
+//
+// Reads each sheet, preserves IDs verbatim where present, and returns
+// structured data. NEVER calls `newId()` here — the diff step assigns IDs
+// to genuinely new rows, so the preview can show "23 hinzufügen" honestly.
+function parseExcelImport(arrayBuffer){
+  const wb = XLSX.read(arrayBuffer,{type:'array'});
+  const wsQ = wb.Sheets['Fragen'] || wb.Sheets['Questions'];
+  // The new export uses "Weiterbildungsgaenge"; older exports used
+  // "Weiterbildungsgänge". Accept both; the Semesteransicht sheet is also
+  // accepted as a structural fallback.
+  const wsP = wb.Sheets['Weiterbildungsgaenge'] || wb.Sheets['Weiterbildungsgänge'] || wb.Sheets['Programs'];
+  const wsT = wb.Sheets['Kurs Uebersicht'] || wb.Sheets['Kurs Übersicht'];
+  const wsS = wb.Sheets['Semesteransicht'] || wb.Sheets['Semester'];
+  const wsE = wb.Sheets['Gespeicherte Pruefungen'] || wb.Sheets['Gespeicherte Prüfungen'] || wb.Sheets['SavedExams'];
+
+  // Questions: preserved IDs only — let the diff step generate IDs for new rows
+  const questions = wsQ ? readQuestionsFromSheet(wsQ).map(q=>{
+    // readQuestionsFromSheet generates `import_<ts>_<i>` IDs for empty cells —
+    // we strip those here so the diff step sees them as "no ID, treat as new"
+    const isGenerated = typeof q.id==='string' && q.id.startsWith('import_');
+    return isGenerated ? {...q,id:''} : q;
+  }) : [];
+
+  // Programs: pull metadata sheet for IDs; merge in matrix sheet for semesters
+  const programsMeta = readProgramsMetaFromSheet(wsP);
+  const pRowsRaw = wsP ? XLSX.utils.sheet_to_json(wsP,{defval:''}) : [];
+  const fromSemesterSheet = wsS ? buildProgramsFromSemesterSheet(wsS, pRowsRaw) : [];
+  // buildProgramsFromSemesterSheet returns semesters keyed by name; merge IDs in
+  const programs = fromSemesterSheet.map(p=>{
+    const meta = programsMeta.find(m=>m.name===p.name);
+    return {
+      ...p,
+      id: meta?.id || p.id || null,
+      startYear: meta?.startYear || p.startYear || '',
+      startTerm: meta?.startTerm || p.startTerm || 'HS',
+    };
+  });
+  // If the matrix sheet was missing but metadata exists, surface the
+  // programs with empty semesters so the diff can still match them by ID.
+  if(!programs.length && programsMeta.length){
+    programsMeta.forEach(m=>{
+      programs.push({
+        id: m.id || null,
+        name: m.name,
+        startYear: m.startYear,
+        startTerm: m.startTerm,
+        semesters: Array.from({length:SEMESTER_COUNT},(_,i)=>emptySemester(i+1)),
+      });
+    });
+  }
+
+  const courseTagsParsed = wsT ? readCourseTagsFromSheet(wsT, programs) : {courseTags:{},courses:[]};
+  const savedExams = wsE ? readSavedExamsFromSheet(wsE) : [];
+
+  return {
+    questions,
+    programs,
+    courseTags: courseTagsParsed.courseTags,
+    coursesInTagSheet: courseTagsParsed.courses,
+    savedExams,
+  };
+}
+
+// computeExcelImportDiff(parsed, current) → diff with counts per category.
+// "delete" intentionally not computed — the v1.0.15 contract is never to
+// delete rows missing from the Excel. Users delete in-app.
+function computeExcelImportDiff(parsed, current){
+  const diff = {
+    questions: { add:[], update:[], unchanged:[] },
+    programs:  { add:[], update:[], unchanged:[] },
+    courseTags:{ add:[], update:[], unchanged:[] },
+    savedExams:{ add:[], update:[], unchanged:[] },
+    conflicts: [],
+  };
+
+  // Helper: stable JSON-ish equality on a fixed set of fields.
+  const sameQuestion = (a,b)=> (
+    a.year===b.year && a.location===b.location && a.lecturer===b.lecturer &&
+    a.course===b.course && a.format===b.format && a.question===b.question &&
+    a.optA===b.optA && a.optB===b.optB && a.optC===b.optC &&
+    a.optD===b.optD && a.optE===b.optE && a.answer===b.answer
+  );
+  const sameProgram = (a,b)=> (
+    a.name===b.name && a.startYear===b.startYear && a.startTerm===b.startTerm &&
+    JSON.stringify(a.semesters||[])===JSON.stringify(b.semesters||[])
+  );
+
+  // ── Questions ────────────────────────────────────────────────────────────
+  const currentQById = new Map((current.questions||[]).map(q=>[String(q.id),q]));
+  (parsed.questions||[]).forEach(q=>{
+    // Required fields validation
+    if(!q.course || !q.question){
+      diff.conflicts.push({type:'question',reason:'Pflichtfeld fehlt (Kurs oder Frage)',row:q});
+      return;
+    }
+    if(q.id && currentQById.has(String(q.id))){
+      const existing = currentQById.get(String(q.id));
+      const merged = {...existing,...q,id:existing.id};
+      if(sameQuestion(existing,merged)){
+        diff.questions.unchanged.push(merged);
+      }else{
+        diff.questions.update.push({before:existing,after:merged});
+      }
+    }else{
+      // New row → generate ID at apply time. Mark with sentinel for now.
+      diff.questions.add.push({...q,id:''});
+    }
+  });
+
+  // ── Programs ─────────────────────────────────────────────────────────────
+  const currentPById = new Map((current.programs||[]).map(p=>[String(p.id),p]));
+  const currentPByName = new Map((current.programs||[]).map(p=>[p.name,p]));
+  (parsed.programs||[]).forEach(p=>{
+    if(!p.name){
+      diff.conflicts.push({type:'program',reason:'Name fehlt',row:p});
+      return;
+    }
+    let existing = p.id ? currentPById.get(String(p.id)) : null;
+    if(!existing) existing = currentPByName.get(p.name) || null;
+    if(existing){
+      const merged = {...existing,...p,id:existing.id,semesters:p.semesters||existing.semesters};
+      if(sameProgram(existing,merged)){
+        diff.programs.unchanged.push(merged);
+      }else{
+        diff.programs.update.push({before:existing,after:merged});
+      }
+    }else{
+      diff.programs.add.push({...p,id:''});
+    }
+  });
+
+  // ── Course tags ──────────────────────────────────────────────────────────
+  const currentTags = current.courseTags || {};
+  const seenCourses = new Set();
+  Object.entries(parsed.courseTags||{}).forEach(([course,ids])=>{
+    seenCourses.add(course);
+    const before = (currentTags[course]||[]).map(String).sort();
+    const after = (ids||[]).map(String).sort();
+    if(before.join('|')===after.join('|')){
+      diff.courseTags.unchanged.push({course,ids:after});
+    }else if(!currentTags[course]){
+      diff.courseTags.add.push({course,ids:after});
+    }else{
+      diff.courseTags.update.push({course,before,after});
+    }
+  });
+
+  // ── Saved exams ──────────────────────────────────────────────────────────
+  const currentExamById = new Map((current.savedExams||[]).map(e=>[String(e.id),e]));
+  (parsed.savedExams||[]).forEach(exam=>{
+    if(exam.id && currentExamById.has(String(exam.id))){
+      const existing = currentExamById.get(String(exam.id));
+      if(JSON.stringify(existing.questions)===JSON.stringify(exam.questions) && existing.name===exam.name){
+        diff.savedExams.unchanged.push(existing);
+      }else{
+        diff.savedExams.update.push({before:existing,after:{...existing,...exam,id:existing.id}});
+      }
+    }else{
+      diff.savedExams.add.push(exam);
+    }
+  });
+
+  return diff;
+}
+
+// applyExcelImport(diff, state, setters) — performs the writes after the
+// user clicks "Anwenden" in the preview modal. Snapshots the current state
+// to `aim_last_backup` first so "Letzten Stand wiederherstellen" works.
+function applyExcelImport(diff, state, setters){
+  const {questions, programs, courseTags, savedExams} = state;
+  const {setQuestions, setPrograms, setCourseTags, setSavedExams, saveLastBackup, normalizePrograms} = setters;
+
+  // 1. Snapshot for undo
+  if(typeof saveLastBackup === 'function'){
+    saveLastBackup({questions, programs, courseTags, savedExams});
+  }
+
+  // 2. Apply questions: keep current order, update in place, append new at end
+  const newQuestions = [...(questions||[])];
+  const qById = new Map(newQuestions.map((q,i)=>[String(q.id),i]));
+  diff.questions.update.forEach(({after})=>{
+    const idx = qById.get(String(after.id));
+    if(idx!==undefined) newQuestions[idx] = after;
+  });
+  diff.questions.add.forEach(q=>{
+    const fresh = {...q,id:newId('q')};
+    newQuestions.push(fresh);
+  });
+  setQuestions(newQuestions);
+
+  // 3. Apply programs: same merge strategy
+  const newPrograms = [...(programs||[])];
+  const pById = new Map(newPrograms.map((p,i)=>[String(p.id),i]));
+  diff.programs.update.forEach(({after})=>{
+    const idx = pById.get(String(after.id));
+    if(idx!==undefined) newPrograms[idx] = after;
+  });
+  diff.programs.add.forEach(p=>{
+    const fresh = {...p,id:newId('p')};
+    newPrograms.push(fresh);
+  });
+  setPrograms(normalizePrograms ? normalizePrograms(newPrograms) : newPrograms);
+
+  // 4. Apply course tags: full merge (we keep tags for courses not in the sheet)
+  const newTags = {...(courseTags||{})};
+  diff.courseTags.add.forEach(({course,ids})=>{ newTags[course]=ids; });
+  diff.courseTags.update.forEach(({course,after})=>{ newTags[course]=after; });
+  setCourseTags(newTags);
+
+  // 5. Apply saved exams
+  const newSavedExams = [...(savedExams||[])];
+  const eById = new Map(newSavedExams.map((e,i)=>[String(e.id),i]));
+  diff.savedExams.update.forEach(({after})=>{
+    const idx = eById.get(String(after.id));
+    if(idx!==undefined) newSavedExams[idx] = after;
+  });
+  diff.savedExams.add.forEach(exam=>{ newSavedExams.push(exam); });
+  setSavedExams(newSavedExams);
+}
+
+// Thin wrapper used by Dashboard: parse + diff, then call the preview opener.
+// The preview opener owns the apply step so the user can cancel.
+function previewExcelImport(file, current, onPreview, showToast){
   const reader = new FileReader();
   reader.onload = evt => {
     try{
-      const wb = XLSX.read(evt.target.result,{type:'array'});
-
-      // ── Fragen ────────────────────────────────────────────────────────────
-      let newQuestions=[];
-      const wsQ = wb.Sheets['Fragen'] || wb.Sheets['Questions'];
-      if(wsQ){
-        newQuestions = readQuestionsFromSheet(wsQ).map(q=>({...q,id:newId('q')}));
-      }
-
-      // ── Weiterbildungsgänge + Module ──────────────────────────────────────
-      // Sheet name fallbacks: round-trips through Numbers/LibreOffice can lose
-      // umlauts or truncate to 31 chars, silently dropping data otherwise.
-      let newPrograms=[];
-      const wsP = wb.Sheets['Weiterbildungsgänge'] || wb.Sheets['Weiterbildungsgaenge'] || wb.Sheets['Programs'];
-      const wsS = wb.Sheets['Semesteransicht'] || wb.Sheets['Semester'];
-      const wsM = wb.Sheets['Module'];
-      const wsE = wb.Sheets['Gespeicherte Prüfungen'] || wb.Sheets['Gespeicherte Pruefungen'] || wb.Sheets['SavedExams'];
-      const pRows = wsP ? XLSX.utils.sheet_to_json(wsP,{defval:''}) : [];
-      const fromSemesterSheet = wsS ? buildProgramsFromSemesterSheet(wsS,pRows) : [];
-      if(fromSemesterSheet.length){
-        newPrograms=fromSemesterSheet;
-      }else if(wsP){
-        const mRows = wsM ? XLSX.utils.sheet_to_json(wsM,{defval:''}) : [];
-        const semesterMatrixRows = wsS ? XLSX.utils.sheet_to_json(wsS,{header:1,defval:''}) : [];
-        const semesterMap = new Map();
-
-        if(semesterMatrixRows.length>2){
-          let currentProgram='';
-          const startRow=Math.max(semesterMatrixRows.findIndex(row=>row.map(v=>String(v||'').trim()).includes('Kursname'))+1,2);
-          semesterMatrixRows.slice(startRow).forEach(row=>{
-            if(!row.some(cell=>String(cell||'').trim())) return;
-            if(String(row[1]||'').trim()) currentProgram=String(row[1]||'').trim();
-            if(!currentProgram) return;
-            for(let semIndex=0;semIndex<SEMESTER_COUNT;semIndex++){
-              const start=4+semIndex*3;
-              const key=`${currentProgram}__${semIndex+1}`;
-              if(!semesterMap.has(key)) semesterMap.set(key,[]);
-              semesterMap.get(key).push({
-                year:String(row[start]||''),
-                lecturer:String(row[start+1]||''),
-                course:String(row[start+2]||''),
-              });
-            }
-          });
-        }
-
-        newPrograms = pRows.filter(r=>r['Name']).map((r,i)=>{
-          const semesters = Array.from({length:6},(_,si)=>({
-            sem: si+1,
-            modules: Array.from({length:4},(_,mi)=>{
-              const semesterKey=`${String(r['Name'])}__${si+1}`;
-              const fromMatrix=(semesterMap.get(semesterKey)||[])[mi];
-              if(fromMatrix){
-                return{
-                  year:String(fromMatrix.year||''),
-                  lecturer:String(fromMatrix.lecturer||''),
-                  course:String(fromMatrix.course||''),
-                };
-              }
-              const mod = mRows.find(m=>
-                String(m['Weiterbildungsgang'])===String(r['Name'])&&
-                Number(m['Semester'])===si+1&&
-                Number(m['Modul'])===mi+1
-              );
-              return { year:mod?String(mod['Jahr']||''):'', lecturer:mod?String(mod['Dozent/in']||''):'', course:mod?String(mod['Kurs']||''):'' };
-            }),
-          }));
-          return { id:newId('p'), name:String(r['Name']), startYear:String(r['Startjahr']||''), startTerm:String(r['Startsemester']||'HS'), semesters };
-        });
-      }
-      const newSavedExams=wsE?readSavedExamsFromSheet(wsE):[];
-
-      if(!newQuestions.length && !newPrograms.length && !newSavedExams.length){
+      const parsed = parseExcelImport(evt.target.result);
+      if(!parsed.questions.length && !parsed.programs.length && !Object.keys(parsed.courseTags).length && !parsed.savedExams.length){
         showToast('Keine gültigen Daten in der Excel-Datei gefunden.','error');
         return;
       }
-      if(newQuestions.length) setQuestions(newQuestions);
-      if(newPrograms.length) setPrograms(normalizePrograms(newPrograms));
-      if(newSavedExams.length) setSavedExams(newSavedExams);
-      showToast(`Excel importiert: ${newQuestions.length} Fragen, ${newPrograms.length} Weiterbildungsgänge, ${newSavedExams.length} gespeicherte Prüfungen.`,'success');
+      const diff = computeExcelImportDiff(parsed, current);
+      onPreview(diff, parsed);
     }catch(e){
+      console.error('Excel parse error:',e);
       showToast('Excel-Datei konnte nicht gelesen werden.','error');
     }
   };
@@ -1103,6 +1410,76 @@ function ConfirmModal({confirm,onClose}){
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
           <Btn ch="Abbrechen" onClick={onClose} v="ghost" autoFocus/>
           <Btn ch={confirm.confirmLabel||'Löschen'} onClick={()=>{confirm.onConfirm?.();onClose();}} v={confirm.confirmV||'danger'}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Excel import preview modal — v1.0.15
+// Shows the user exactly what will happen before any state changes. Reads
+// counts off the diff returned by computeExcelImportDiff().
+function ExcelImportPreviewModal({preview,onCancel,onApply}){
+  useEffect(()=>{
+    if(!preview) return;
+    const prevActive=document.activeElement;
+    const onKey=e=>{ if(e.key==='Escape'){ e.preventDefault(); onCancel(); } };
+    window.addEventListener('keydown',onKey);
+    return()=>{
+      window.removeEventListener('keydown',onKey);
+      try{ if(prevActive && typeof prevActive.focus==='function') prevActive.focus(); }catch{}
+    };
+  },[preview,onCancel]);
+  if(!preview) return null;
+  const {diff}=preview;
+  const sections=[
+    {key:'questions',label:'Fragen',d:diff.questions},
+    {key:'programs',label:'Weiterbildungsgänge',d:diff.programs},
+    {key:'courseTags',label:'Kurs-Tags',d:diff.courseTags},
+    {key:'savedExams',label:'Gespeicherte Prüfungen',d:diff.savedExams},
+  ];
+  const totals={
+    add:sections.reduce((s,x)=>s+x.d.add.length,0),
+    update:sections.reduce((s,x)=>s+x.d.update.length,0),
+    unchanged:sections.reduce((s,x)=>s+x.d.unchanged.length,0),
+  };
+  const hasChanges=totals.add+totals.update>0;
+  return(
+    <div role="dialog" aria-modal="true" aria-labelledby="aim-xls-preview-title" style={{position:'fixed',inset:0,background:'rgba(17,17,17,0.5)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center',padding:24}} onClick={onCancel}>
+      <div style={{background:C.wh,borderRadius:8,padding:'24px',maxWidth:560,width:'100%',boxShadow:'0 8px 40px rgba(0,0,0,0.25)',maxHeight:'80vh',overflow:'auto'}} onClick={e=>e.stopPropagation()}>
+        <div id="aim-xls-preview-title" style={{fontFamily:serif,fontSize:'17px',color:C.tD,marginBottom:6,fontWeight:700}}>Excel-Import — Vorschau</div>
+        <p style={{fontSize:'13px',color:C.mu,margin:'0 0 16px',lineHeight:1.5}}>
+          Vor dem Anwenden wird der aktuelle Stand automatisch gesichert. Du kannst danach auf dem Dashboard mit „Letzten Stand wiederherstellen" zurück.
+        </p>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto',gap:'6px 14px',fontSize:'13px',alignItems:'center',marginBottom:16}}>
+          <div style={{fontSize:'10px',letterSpacing:'1px',textTransform:'uppercase',color:C.mu}}>Kategorie</div>
+          <div style={{fontSize:'10px',letterSpacing:'1px',textTransform:'uppercase',color:C.mu,textAlign:'right'}}>Neu</div>
+          <div style={{fontSize:'10px',letterSpacing:'1px',textTransform:'uppercase',color:C.mu,textAlign:'right'}}>Aktual.</div>
+          <div style={{fontSize:'10px',letterSpacing:'1px',textTransform:'uppercase',color:C.mu,textAlign:'right'}}>Unverändert</div>
+          {sections.map(s=>(
+            <React.Fragment key={s.key}>
+              <div style={{color:C.tx}}>{s.label}</div>
+              <div style={{textAlign:'right',fontWeight:s.d.add.length?700:400,color:s.d.add.length?C.gr:C.mu}}>{s.d.add.length}</div>
+              <div style={{textAlign:'right',fontWeight:s.d.update.length?700:400,color:s.d.update.length?C.t:C.mu}}>{s.d.update.length}</div>
+              <div style={{textAlign:'right',color:C.mu}}>{s.d.unchanged.length}</div>
+            </React.Fragment>
+          ))}
+        </div>
+        {diff.conflicts && diff.conflicts.length>0 && (
+          <div style={{background:C.rP,border:`1px solid ${C.re}`,borderRadius:6,padding:'10px 12px',marginBottom:16}}>
+            <div style={{fontSize:'12px',fontWeight:600,color:C.re,marginBottom:4}}>{diff.conflicts.length} Konflikte — werden übersprungen</div>
+            <ul style={{margin:0,paddingLeft:18,fontSize:'12px',color:C.tx}}>
+              {diff.conflicts.slice(0,5).map((c,i)=>(<li key={i}>{c.type}: {c.reason}</li>))}
+              {diff.conflicts.length>5 && <li style={{color:C.mu}}>… und {diff.conflicts.length-5} weitere</li>}
+            </ul>
+          </div>
+        )}
+        <div style={{background:'#FEF3E2',border:'1px solid #E8C794',borderRadius:6,padding:'10px 12px',marginBottom:16,fontSize:'12px',color:'#7A4F10'}}>
+          <strong>Hinweis:</strong> Zeilen, die in der Excel-Datei FEHLEN, werden NICHT gelöscht. Lösche Einträge bei Bedarf direkt in der App.
+        </div>
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <Btn ch="Abbrechen" onClick={onCancel} v="ghost"/>
+          <Btn ch={hasChanges?`Anwenden — ${totals.add} neu, ${totals.update} aktualisiert`:'Keine Änderungen'} onClick={hasChanges?onApply:onCancel} v={hasChanges?'primary':'ghost'} dis={!hasChanges} autoFocus/>
         </div>
       </div>
     </div>
@@ -1537,6 +1914,9 @@ function SaveIndicator({lastSavedAt}){
 export function Dashboard({questions,programs,exam,examName,savedExams,courseTags={},setCourseTags=()=>{},setView,setQuestions,setPrograms,setSavedExams,setExam,setExamName,showToast,showConfirm,onClearAllData,saveLastBackup}){
   const restoreRef=useRef(null);
   const excelImportRef=useRef(null);
+  // Excel import preview state — when set, the modal renders and the user
+  // can either Anwenden or Abbrechen. v1.0.15.
+  const[excelPreview,setExcelPreview]=useState(null);
   // Tick to force re-read of aim_last_backup when destructive ops run.
   const[lastBackupTick,setLastBackupTick]=useState(0);
   const lastBackupMeta=React.useMemo(()=>{
@@ -1670,21 +2050,45 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
       },
     });
   };
-  // Excel import wipes existing Q/P/SavedExams — confirm before doing so.
+  // Excel import — v1.0.15 round-trip pipeline:
+  //   1. Parse the file into structured data (preserving IDs)
+  //   2. Diff against current state
+  //   3. Show preview modal so user sees exact counts
+  //   4. On apply: snapshot current state, then merge
+  // The previous wipe-and-replace behaviour is gone — Excel imports now MERGE
+  // by ID and never delete missing rows.
   const requestExcelImport=file=>{
     if(!file)return;
-    showConfirm({
-      message:`Die aktuelle Datenbank wird durch den Inhalt von „${file.name}“ ersetzt. Fortfahren?`,
-      confirmLabel:'Importieren',
-      confirmV:'danger',
-      onConfirm:()=>{
-        saveLastBackup?.();
-        importExcel(file,setQuestions,setPrograms,setSavedExams,showToast,normalizePrograms);
-        setLastBackupTick(t=>t+1);
-      },
-    });
+    previewExcelImport(
+      file,
+      {questions, programs, courseTags, savedExams},
+      (diff, parsed)=>{ setExcelPreview({diff, parsed, fileName:file.name}); },
+      showToast,
+    );
+  };
+  const applyExcelPreview=()=>{
+    if(!excelPreview) return;
+    try{
+      applyExcelImport(excelPreview.diff,{questions,programs,courseTags,savedExams},{
+        setQuestions,setPrograms,setCourseTags,setSavedExams,
+        saveLastBackup:()=>saveLastBackup?.(),
+        normalizePrograms,
+      });
+      const d=excelPreview.diff;
+      const totalAdd=d.questions.add.length+d.programs.add.length+d.courseTags.add.length+d.savedExams.add.length;
+      const totalUpd=d.questions.update.length+d.programs.update.length+d.courseTags.update.length+d.savedExams.update.length;
+      showToast(`Excel-Import: ${totalAdd} neu, ${totalUpd} aktualisiert.`,'success');
+      setLastBackupTick(t=>t+1);
+    }catch(e){
+      console.error('applyExcelImport failed:',e);
+      showToast('Import konnte nicht angewendet werden.','error');
+    }finally{
+      setExcelPreview(null);
+    }
   };
   return(
+    <>
+    <ExcelImportPreviewModal preview={excelPreview} onCancel={()=>setExcelPreview(null)} onApply={applyExcelPreview}/>
     <div style={{padding:28}}>
       <SectionHeader title="Dashboard" sub="AIM Prüfungs-Manager — Willkommen" action={<Btn ch="Neue Prüfung →" onClick={()=>setView('exam')} v="primary"/>}/>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:24}}>
@@ -1752,7 +2156,7 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
           <div>
             <div style={{fontSize:'11px',color:C.mu,marginBottom:6,fontWeight:500}}>Excel (Fragen, Weiterbildungsgänge, Semesteransicht, Gespeicherte Prüfungen)</div>
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              <Btn ch="↓ Excel exportieren" onClick={()=>{exportExcel(questions,programs,savedExams);showToast('Excel-Datei wird heruntergeladen.','success');}} v="ghost"/>
+              <Btn ch="↓ Excel exportieren" onClick={()=>{exportExcel(questions,programs,savedExams,courseTags);showToast('Excel-Datei wird heruntergeladen.','success');}} v="ghost"/>
               <Btn ch="↑ Excel importieren" onClick={()=>excelImportRef.current?.click()} v="ghost"/>
             </div>
           </div>
@@ -1801,6 +2205,7 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
         </div>
       </div>
     </div>
+    </>
   );
 }
 
