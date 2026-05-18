@@ -4,6 +4,42 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.13] — 2026-05-18
+
+### Hinzugefügt
+- **Kurs Übersicht** als neue Sidebar-Seite zwischen „Fragen Datenbank" und
+  „Weiterbildungsgänge". Listet alle Kurse in der Datenbank mit Dozent/in,
+  Jahr, Fragen-Anzahl und den zugeordneten Weiterbildungsgängen.
+- **Explizite Weiterbildungsgang-Tags pro Kurs**: Auf der Kurs Übersicht
+  und im Frage-Bearbeiten-Formular wird per Häkchen gewählt, zu welchen
+  Weiterbildungsgängen ein Kurs gehört. Ein Tag-Eintrag gilt für alle
+  Fragen dieses Kurses gleichzeitig. Ersetzt das bisherige implizite
+  Matching über Kurs+Dozent+Jahr gegen WBG-Module.
+- Neue Hilfsfunktion `migrateCourseTagsFromMatrix` mit drei zusätzlichen
+  Unit-Tests (33 total).
+
+### Verändert
+- **Erst-Start-Migration**: Beim ersten Laden von v1.0.13 werden die Tags
+  automatisch aus der bisherigen impliziten Beziehung berechnet (Kurs in
+  WBG-Modul) und gespeichert. Danach sind Tags explizit editierbar.
+- **„Weiterbildungsgang"-Filter** in der Fragen Datenbank verwendet jetzt
+  die expliziten Tags. Die Spalte „Weiterbildungsgänge" zeigt die
+  Mitgliedschaften aus der Tag-Map.
+- **CourseAutocomplete** in der Weiterbildungsgänge-Matrix schlägt nur
+  noch Kurse vor, die für das jeweilige Programm getaggt sind. Freitext
+  bleibt erlaubt.
+- **PDF-Export**: Frage-Text ist nicht mehr halbfett (`font-weight:600`)
+  sondern normal. **Nur die korrekte Antwort** ist fett — damit Testportal
+  beim Import die richtige Antwort eindeutig erkennen kann.
+- **Backup-Format Version 4**: enthält `courseTags`. Ältere Backups (v3
+  und früher) werden beim Wiederherstellen automatisch migriert.
+- **„Alle Daten löschen"** entfernt jetzt auch `aim_course_tags`.
+
+### Technisch
+- Neue Named-Exports `KursUebersicht`, `migrateCourseTagsFromMatrix`.
+- `programsForQuestion(question, programs, courseTags)` — Signatur um
+  drittes Argument erweitert.
+
 ## [1.0.12] — 2026-05-18
 
 ### Verändert

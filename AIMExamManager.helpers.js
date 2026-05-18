@@ -41,32 +41,53 @@ export function shortProgramName(name = "") {
 }
 
 // Reference implementation of the "which Weiterbildungsgänge does this
-// question belong to" computation. Same matching rule as the exam builder:
-//   course === module.course
-//   AND (no lecturer on either side, or they match)
-//   AND (no year on either side, or they match)
+// question belong to" computation.
+//
+// As of v1.0.13 this is a simple lookup against the EXPLICIT per-course
+// `courseTags` map (format: { [courseName]: [wbgId, ...] }). The previous
+// implicit rule (matching course/lecturer/year against WBG modules) is
+// only used at first-launch migration to seed initial tags — see
+// `migrateCourseTagsFromMatrix` below.
+//
 // The monolith's version of this function in AIMExamManager.jsx must stay
 // in lock-step with this one — the tests in AIMExamManager.helpers.test.js
 // pin the contract.
-export function programsForQuestion(question, programs) {
-  if (!question || !Array.isArray(programs)) return [];
-  const matched = new Map();
-  for (const p of programs) {
-    let hit = false;
-    for (const s of p.semesters || []) {
-      for (const m of s.modules || []) {
-        if (!m.course) continue;
-        if (m.course !== question.course) continue;
-        if (m.lecturer && question.lecturer && m.lecturer !== question.lecturer) continue;
-        if (m.year && question.year && m.year !== question.year) continue;
-        hit = true;
-        break;
+export function programsForQuestion(question, programs, courseTags) {
+  if (!question || !Array.isArray(programs) || !courseTags) return [];
+  const ids = courseTags[question.course];
+  if (!Array.isArray(ids) || !ids.length) return [];
+  const idSet = new Set(ids.map(String));
+  return programs
+    .filter((p) => idSet.has(String(p.id)))
+    .map((p) => ({ id: p.id, name: p.name }));
+}
+
+// One-shot migration: compute initial course tags from the old implicit
+// course-in-module relationship. Used once on first launch of v1.0.13 to
+// seed `courseTags` for existing users; after that, tags are managed
+// explicitly via Kurs Übersicht.
+export function migrateCourseTagsFromMatrix(questions, programs) {
+  const out = {};
+  if (!Array.isArray(questions) || !Array.isArray(programs)) return out;
+  const uniqueCourses = [...new Set(questions.map((q) => q.course).filter(Boolean))];
+  for (const course of uniqueCourses) {
+    const wbgIds = [];
+    for (const p of programs) {
+      let hit = false;
+      for (const s of p.semesters || []) {
+        for (const m of s.modules || []) {
+          if (m.course === course) {
+            hit = true;
+            break;
+          }
+        }
+        if (hit) break;
       }
-      if (hit) break;
+      if (hit) wbgIds.push(p.id);
     }
-    if (hit) matched.set(p.id, { id: p.id, name: p.name });
+    out[course] = wbgIds;
   }
-  return [...matched.values()];
+  return out;
 }
 
 export function buildExportPayload({

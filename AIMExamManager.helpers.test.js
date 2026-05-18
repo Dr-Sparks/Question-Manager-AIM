@@ -4,6 +4,7 @@ import {
   COURSE_SLOT_COUNT,
   autoSelectQuestions,
   buildExportPayload,
+  migrateCourseTagsFromMatrix,
   normalizeSlots,
   programsForQuestion,
   shortProgramName,
@@ -294,105 +295,120 @@ test("shortProgramName preserves internal parentheticals", () => {
   assert.equal(shortProgramName("WBS (Pilot) Bern"), "WBS (Pilot) Bern");
 });
 
-// ── programsForQuestion ────────────────────────────────────────────────────
+// ── programsForQuestion (v1.0.13: now reads from courseTags map) ──────────
 
-const programA = {
-  id: "p1",
-  name: "WBS A",
-  semesters: [
-    { sem: 1, modules: [{ course: "Sucht", lecturer: "Dr. Petry", year: "2025" }] },
-  ],
-};
-const programB = {
-  id: "p2",
-  name: "WBS B",
-  semesters: [
-    { sem: 1, modules: [{ course: "Sucht", lecturer: "", year: "" }] },
-  ],
-};
-const programC = {
-  id: "p3",
-  name: "WBS C",
-  semesters: [
-    { sem: 1, modules: [{ course: "Essstörungen", lecturer: "Dr. Mihov", year: "2025" }] },
-  ],
-};
+const programA = { id: "p1", name: "WBS A", semesters: [] };
+const programB = { id: "p2", name: "WBS B", semesters: [] };
+const programC = { id: "p3", name: "WBS C", semesters: [] };
 
-test("programsForQuestion returns empty array when programs is empty/missing", () => {
-  assert.deepEqual(programsForQuestion({ course: "Sucht" }, []), []);
-  assert.deepEqual(programsForQuestion({ course: "Sucht" }), []);
-  assert.deepEqual(programsForQuestion(null, [programA]), []);
+test("programsForQuestion returns empty for missing/empty inputs", () => {
+  const tags = { Sucht: ["p1"] };
+  assert.deepEqual(programsForQuestion({ course: "Sucht" }, [], tags), []);
+  assert.deepEqual(programsForQuestion({ course: "Sucht" }, [programA]), []);
+  assert.deepEqual(programsForQuestion(null, [programA], tags), []);
 });
 
-test("programsForQuestion exact course+lecturer+year match", () => {
+test("programsForQuestion returns the WBGs whose IDs are listed in courseTags[course]", () => {
+  const tags = { Sucht: ["p1", "p2"], Essstörungen: ["p3"] };
   const matched = programsForQuestion(
-    { course: "Sucht", lecturer: "Dr. Petry", year: "2025" },
-    [programA, programB, programC]
+    { course: "Sucht" },
+    [programA, programB, programC],
+    tags
   );
-  assert.deepEqual(
-    matched.map((p) => p.id),
-    ["p1", "p2"]
-  );
+  assert.deepEqual(matched.map((p) => p.id), ["p1", "p2"]);
 });
 
-test("programsForQuestion: blank lecturer on question matches all programs with the course", () => {
-  const matched = programsForQuestion({ course: "Sucht", lecturer: "", year: "" }, [
-    programA,
-    programB,
-    programC,
-  ]);
-  assert.deepEqual(
-    matched.map((p) => p.id),
-    ["p1", "p2"]
-  );
-});
-
-test("programsForQuestion: lecturer mismatch excludes program", () => {
+test("programsForQuestion ignores stale tag IDs that no longer match any program", () => {
+  // Tag references a program that's been deleted — should be silently filtered out.
+  const tags = { Sucht: ["p1", "p999_deleted"] };
   const matched = programsForQuestion(
-    { course: "Sucht", lecturer: "Dr. Other", year: "2025" },
-    [programA, programB, programC]
+    { course: "Sucht" },
+    [programA, programB],
+    tags
   );
-  // p1 has lecturer "Dr. Petry" — mismatch → excluded
-  // p2 has blank lecturer → still matches
+  assert.deepEqual(matched.map((p) => p.id), ["p1"]);
+});
+
+test("programsForQuestion returns [] when the course has no tag entry", () => {
+  const tags = { Essstörungen: ["p3"] };
   assert.deepEqual(
-    matched.map((p) => p.id),
-    ["p2"]
+    programsForQuestion({ course: "Sucht" }, [programA, programB, programC], tags),
+    []
   );
 });
 
-test("programsForQuestion: course mismatch excludes all", () => {
+test("programsForQuestion: ignores lecturer / year completely (only course tags matter now)", () => {
+  // Pre-v1.0.13 this would have used lecturer/year filtering. Now: tag list is the truth.
+  const tags = { Sucht: ["p1"] };
   const matched = programsForQuestion(
-    { course: "Nonexistent" },
-    [programA, programB, programC]
+    { course: "Sucht", lecturer: "Anyone", year: "9999" },
+    [programA, programB],
+    tags
   );
-  assert.deepEqual(matched, []);
+  assert.deepEqual(matched.map((p) => p.id), ["p1"]);
 });
 
-test("programsForQuestion: doesn't double-count when module appears in multiple semesters", () => {
-  const dupProgram = {
-    id: "pdup",
-    name: "WBS Dup",
-    semesters: [
-      { sem: 1, modules: [{ course: "Sucht", lecturer: "", year: "" }] },
-      { sem: 2, modules: [{ course: "Sucht", lecturer: "", year: "" }] },
-    ],
-  };
-  const matched = programsForQuestion({ course: "Sucht" }, [dupProgram]);
-  assert.equal(matched.length, 1);
-  assert.equal(matched[0].id, "pdup");
+test("programsForQuestion: handles numeric program IDs vs string tag IDs (coerces both)", () => {
+  const numericProgram = { id: 42, name: "WBS Numeric", semesters: [] };
+  // Tag stored as string "42" should still match a program with numeric id 42.
+  const tags = { Sucht: ["42"] };
+  const matched = programsForQuestion(
+    { course: "Sucht" },
+    [numericProgram],
+    tags
+  );
+  assert.deepEqual(matched.map((p) => p.id), [42]);
 });
 
-test("programsForQuestion: ignores empty/blank modules", () => {
-  const sparseProgram = {
-    id: "psparse",
-    name: "WBS Sparse",
-    semesters: [
-      { sem: 1, modules: [{ course: "", lecturer: "", year: "" }, { course: "Sucht", lecturer: "", year: "" }] },
-    ],
-  };
-  const matched = programsForQuestion({ course: "Sucht" }, [sparseProgram]);
-  assert.deepEqual(
-    matched.map((p) => p.id),
-    ["psparse"]
-  );
+// ── migrateCourseTagsFromMatrix ───────────────────────────────────────────
+
+test("migrateCourseTagsFromMatrix seeds tags from existing course-in-module relationships", () => {
+  const programs = [
+    {
+      id: "p1",
+      name: "WBS A",
+      semesters: [
+        { sem: 1, modules: [{ course: "Sucht", lecturer: "Dr. P", year: "2025" }] },
+        { sem: 2, modules: [{ course: "Essstörungen", lecturer: "Dr. M", year: "2025" }] },
+      ],
+    },
+    {
+      id: "p2",
+      name: "WBS B",
+      semesters: [
+        { sem: 1, modules: [{ course: "Sucht", lecturer: "", year: "" }] },
+      ],
+    },
+  ];
+  const questions = [
+    { id: 1, course: "Sucht" },
+    { id: 2, course: "Essstörungen" },
+    { id: 3, course: "Standalone — not in any program" },
+  ];
+  const out = migrateCourseTagsFromMatrix(questions, programs);
+  assert.deepEqual(out["Sucht"], ["p1", "p2"]);
+  assert.deepEqual(out["Essstörungen"], ["p1"]);
+  // Course that's in no program gets an empty tag list (the user can still
+  // tag it later from Kurs Übersicht).
+  assert.deepEqual(out["Standalone — not in any program"], []);
+});
+
+test("migrateCourseTagsFromMatrix: returns {} for empty/missing inputs", () => {
+  assert.deepEqual(migrateCourseTagsFromMatrix([], []), {});
+  assert.deepEqual(migrateCourseTagsFromMatrix(null, []), {});
+});
+
+test("migrateCourseTagsFromMatrix: doesn't double-tag if a course appears in multiple modules of the same program", () => {
+  const programs = [
+    {
+      id: "p1",
+      name: "WBS A",
+      semesters: [
+        { sem: 1, modules: [{ course: "Sucht" }, { course: "Sucht" }] },
+        { sem: 2, modules: [{ course: "Sucht" }] },
+      ],
+    },
+  ];
+  const out = migrateCourseTagsFromMatrix([{ id: 1, course: "Sucht" }], programs);
+  assert.deepEqual(out["Sucht"], ["p1"]);
 });
