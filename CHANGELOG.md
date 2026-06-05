@@ -4,6 +4,20 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.19] — 2026-06-05
+
+### Geändert
+- **Beispieldaten erneuert.** Die mitgelieferten Beispiel-Fragen und
+  -Weiterbildungsgänge wurden durch einen sauberen, realistischen Beispiel-
+  Datensatz ersetzt:
+  - **16 Beispiel-Fragen** aus dem AIM-Fragenkatalog in **4 Kursen**
+    (Psychoonkologie, Psychosomatische Erkrankungen, Schwierige
+    Therapiesituationen, Einführung in die Schematherapie) — mit Single-Choice-,
+    Multiple-Choice- und Richtig/Falsch-Fragen samt korrekt markierten Antworten.
+  - **3 realistische Weiterbildungsgänge** über alle 6 Semester. Alle Kurse sind
+    den Weiterbildungsgängen zugeordnet, sodass sich sofort eine Beispiel-Prüfung
+    erstellen, exportieren und ins Testportal laden lässt.
+
 ## [1.0.18] — 2026-06-05
 
 ### Hinzugefügt
