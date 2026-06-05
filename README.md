@@ -87,15 +87,14 @@ Die zusätzliche Manuell-Installation auf Mac ist eine Folge davon, dass die App
 
 ### Export & Download
 - Prüfung als TXT exportieren
-- Prüfung als PDF drucken
+- Prüfung als Word-Datei (.docx) für den Testportal-Import exportieren (korrekte Antworten fett markiert)
 - Fertige Prüfung speichern und direkt eine neue starten
 - Gespeicherte Prüfungen später wieder öffnen und weiterbearbeiten
 
-### Hilfe & Anleitung
-- Testportal-Handbuch
-- AIM Prüfungs-Manager-Handbuch
-- Eigene Handbücher erstellen
-- Handbücher mit Bildern exportieren und importieren
+### Anleitung
+- Schritt-für-Schritt-Anleitung für den **AIM Prüfungs-Manager** — eine geführte Tour durch die echte App (animierter Cursor + Erklärungen)
+- Schritt-für-Schritt-Anleitung für **Testportal** mit kurzen, in Schleife laufenden Videos (Anmelden → Importieren → Konfigurieren → Durchführen)
+- Videos für die Testportal-Anleitung werden einfach in `src/anleitung-media/testportal/` abgelegt (genaue Dateinamen siehe `README.md` in diesem Ordner); fehlt ein Video, erscheint automatisch ein „Video folgt"-Platzhalter
 
 ## Wo die Daten gespeichert werden
 

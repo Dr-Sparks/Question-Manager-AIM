@@ -370,3 +370,123 @@ export function buildExportPayload({
     })),
   };
 }
+
+// ── Word (.docx) export for Testportal import ────────────────────────────────
+// MIRROR of the inline implementation in AIMExamManager.jsx. Testportal detects
+// the correct answer from BOLD text. A PDF can't carry "bold" reliably (in a
+// PDF, bold is only a font choice that text extraction discards), so the import
+// marked no correct answer. A .docx stores bold as an explicit <w:b/> run
+// property that Testportal reads directly. ONLY the correct answer line is bold
+// (letter prefix included); the course title, stem and wrong answers stay normal
+// so Testportal never marks a wrong answer as correct.
+
+export function docxEsc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// One <w:p> paragraph; bold=true wraps the run in <w:b/><w:bCs/>.
+export function docxParagraph(text, bold) {
+  const rpr =
+    `<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>` +
+    (bold ? "<w:b/><w:bCs/>" : "") +
+    `<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>`;
+  return (
+    `<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>${rpr}` +
+    `<w:t xml:space="preserve">${docxEsc(text)}</w:t></w:r></w:p>`
+  );
+}
+
+export function buildDocxDocumentXml(questions) {
+  const blocks = questions
+    .map((q, i) => {
+      const correct = q.answer ? q.answer.split(";") : [];
+      const opts = [
+        { k: "A", t: q.optA }, { k: "B", t: q.optB }, { k: "C", t: q.optC },
+        { k: "D", t: q.optD }, { k: "E", t: q.optE },
+      ].filter((o) => o.t);
+      const head = docxParagraph(`${i + 1}. Titel des Kurses: ${q.course || ""}`, false);
+      const stem = docxParagraph(q.question || "", false);
+      const answers = opts
+        .map((o) => docxParagraph(`${o.k.toLowerCase()}) ${o.t}`, correct.includes(o.k)))
+        .join("");
+      const spacer = '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>';
+      return head + stem + answers + spacer;
+    })
+    .join("");
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+    blocks +
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>' +
+    "</w:body></w:document>"
+  );
+}
+
+const DOCX_CONTENT_TYPES =
+  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+const DOCX_RELS =
+  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+
+export function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    let c = (crc ^ bytes[i]) & 0xff;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Minimal STORE (uncompressed) zip writer — a valid .docx with no dependency.
+export function zipStore(files) {
+  const enc = new TextEncoder();
+  const u16 = (n) => [n & 0xff, (n >>> 8) & 0xff];
+  const u32 = (n) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameB = enc.encode(f.name);
+    const dataB = enc.encode(f.data);
+    const crc = crc32(dataB);
+    const local = [
+      ...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(dataB.length), ...u32(dataB.length),
+      ...u16(nameB.length), ...u16(0), ...nameB,
+    ];
+    chunks.push(Uint8Array.from(local), dataB);
+    central.push([
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(dataB.length), ...u32(dataB.length),
+      ...u16(nameB.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0),
+      ...u32(offset), ...nameB,
+    ]);
+    offset += local.length + dataB.length;
+  }
+  const cdStart = offset;
+  const cd = [];
+  for (const c of central) { cd.push(...c); offset += c.length; }
+  const eocd = [
+    ...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length),
+    ...u32(offset - cdStart), ...u32(cdStart), ...u16(0),
+  ];
+  const out = new Uint8Array(cdStart + cd.length + eocd.length);
+  let p = 0;
+  for (const ch of chunks) { out.set(ch, p); p += ch.length; }
+  out.set(Uint8Array.from(cd), p); p += cd.length;
+  out.set(Uint8Array.from(eocd), p);
+  return out;
+}
+
+// Returns the .docx file as a Uint8Array.
+export function buildDocx(questions) {
+  return zipStore([
+    { name: "[Content_Types].xml", data: DOCX_CONTENT_TYPES },
+    { name: "_rels/.rels", data: DOCX_RELS },
+    { name: "word/document.xml", data: buildDocxDocumentXml(questions) },
+  ]);
+}

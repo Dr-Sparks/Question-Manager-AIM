@@ -50,7 +50,9 @@ Diese Liste wird **vor jedem Release** am gebauten `.dmg` / `.exe` durchgegangen
 ## 5. Export & Download
 
 - [ ] `Als TXT exportieren` produziert lesbare Textdatei
-- [ ] `Als PDF drucken` oeffnet System-Druckdialog mit korrektem Layout
+- [ ] `Word (.docx)` laedt eine .docx-Datei herunter (oeffnet in Word/Pages)
+- [ ] In der .docx ist NUR die korrekte Antwort fett (inkl. Buchstabe), sonst nichts
+- [ ] Import der .docx in Testportal erkennt die korrekten Antworten automatisch
 - [ ] `Pruefung speichern und neue starten` legt Pruefung in `Gespeicherte Pruefungen` ab
 - [ ] Gespeicherte Pruefung kann wieder geoeffnet werden
 - [ ] Geoeffnete gespeicherte Pruefung kann weiterbearbeitet werden

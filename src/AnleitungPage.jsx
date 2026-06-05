@@ -1,15 +1,16 @@
-// Über die App — full one-to-one tour of every page in the app.
+// Anleitung — die Bedienungsanleitung der App, in zwei Bereichen:
 //
-// Approach: import the actual page components from the monolith and render
-// them with fake controlled data inside `pointer-events: none` containers.
-// Animated cursor + callouts on top show where to click and what each
-// control does. No screenshots, no mockups — every pixel the user sees in
-// the tour is the live UI rendered by the actual code path.
+//   1. AIM Prüfungs-Manager — eine geführte Tour durch die echte App.
+//      Die tatsächlichen Seiten-Komponenten werden verkleinert gerendert,
+//      ein animierter Cursor + Sprechblasen zeigen, wo man klickt. Kein
+//      Screenshot, kein Mockup — jeder Pixel ist die echte UI.
 //
-// Some flows (form mode in QuestionDB, edit mode in Programs, etc.) live
-// inside the component as `useState` and can't be driven from outside. For
-// those, the tour shows the page in its default state and the caption
-// describes the transition. Everything visible IS the real component.
+//   2. Testportal — Schritt für Schritt erklärt mit kurzen, in Schleife
+//      laufenden Videos (wie GIFs). Der Eigentümer legt die Videos in
+//      src/anleitung-media/testportal/ ab (Dateinamen siehe README dort);
+//      fehlt ein Video, erscheint automatisch ein "Video folgt"-Platzhalter.
+//
+// Diese Seite ersetzt die früheren Tabs "Hilfe & Anleitung" und "Über die App".
 
 import React, { useEffect, useState } from "react";
 
@@ -17,7 +18,7 @@ import {
   C,
   sans,
   serif,
-  // page components
+  // page components (für die AIM-Tour)
   Dashboard,
   QuestionDB,
   Programs,
@@ -181,7 +182,6 @@ function Callout({ x, y, tail = "top-left", children, color = "tD", visible = tr
 // callouts. Pointer events on the inner content are disabled so the tour
 // can never accidentally trigger real handlers (downloads, modals).
 function PageStage({ scale = 0.7, naturalWidth = 1500, naturalHeight, children, overlay }) {
-  const displayedWidth = "100%";
   return (
     <div
       style={{
@@ -384,7 +384,6 @@ const mockSavedExams = [
 const mockSettings = { lockedByDefault: true, defaultScale: 55 };
 
 const noop = () => {};
-const noopAsync = async () => {};
 
 // ─── single tour section helper ──────────────────────────────────────────
 
@@ -400,6 +399,7 @@ function TourSection({ index, title, lead, stage }) {
             letterSpacing: "2px",
             textTransform: "uppercase",
             fontWeight: 700,
+            whiteSpace: "nowrap",
           }}
         >
           Schritt {index}
@@ -432,7 +432,7 @@ function TourSection({ index, title, lead, stage }) {
   );
 }
 
-// ─── per-page tour scenes ────────────────────────────────────────────────
+// ─── per-page tour scenes (AIM Prüfungs-Manager) ───────────────────────────
 
 // 1. Dashboard. The page itself is fairly tall — we render it at scale 0.7
 //    and step the cursor across its main panels.
@@ -719,7 +719,7 @@ function StageExportView() {
       x: "66%",
       y: "12%",
       tail: "top-left",
-      text: "↓ Als PDF speichern — öffnet den System-Druckdialog. Dort „Als PDF sichern“ wählen.",
+      text: "↓ Word (.docx) — exportiert die Prüfung als Word-Datei für den Testportal-Import. Korrekte Antworten sind fett markiert.",
     },
     {
       x: "10%",
@@ -811,7 +811,7 @@ const CHECKLIST_ITEMS = [
   { k: "explore", label: "Beispieldaten ansehen — auf Dashboard alle Werte prüfen" },
   { k: "program", label: "Eigenen Weiterbildungsgang anlegen" },
   { k: "question", label: "Erste eigene Frage hinzufügen" },
-  { k: "exam", label: "Erste eigene Prüfung erstellen und als PDF speichern" },
+  { k: "exam", label: "Erste eigene Prüfung erstellen und als Word-Datei speichern" },
   { k: "backup", label: "JSON-Backup exportieren und an einem sicheren Ort speichern" },
 ];
 
@@ -1006,9 +1006,490 @@ function AboutInfo({ version }) {
   );
 }
 
+// ─── Testportal: Loop-Videos + Szenen ──────────────────────────────────────
+
+// Alle MP4/WebM-Dateien aus dem Drop-in-Ordner einsammeln. Vite bündelt sie
+// beim Build und liefert relative URLs (base "./"), die unter file:// in der
+// Electron-App funktionieren. Fehlt eine Datei, bleibt der Name unbelegt und
+// VideoStage zeigt den "Video folgt"-Platzhalter.
+const TP_MEDIA = import.meta.glob(
+  "./anleitung-media/testportal/*.{mp4,webm}",
+  { eager: true, query: "?url", import: "default" }
+);
+const TP_VIDEOS = {};
+for (const [path, url] of Object.entries(TP_MEDIA)) {
+  const name = path.split("/").pop().replace(/\.(mp4|webm)$/i, "");
+  TP_VIDEOS[name] = url;
+}
+const tpVideo = (name) => TP_VIDEOS[name];
+
+// Bullet list under a video: the spoken/written explanation of each click.
+function PointList({ points }) {
+  return (
+    <ul style={{ listStyle: "none", margin: "14px 0 0", padding: 0, display: "grid", gap: 9 }}>
+      {points.map((p, i) => (
+        <li key={i} style={{ display: "flex", gap: 11, fontSize: 13.5, color: C.tx, lineHeight: 1.55 }}>
+          <span
+            aria-hidden
+            style={{
+              flexShrink: 0,
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: C.t,
+              marginTop: 7,
+            }}
+          />
+          <span>{p}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function InfoNote({ children, icon = "💡" }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        background: C.tP,
+        border: `1px solid ${C.tL}`,
+        borderRadius: 8,
+        padding: "12px 14px",
+        marginTop: 16,
+      }}
+    >
+      <span aria-hidden style={{ fontSize: 16, lineHeight: 1.4 }}>{icon}</span>
+      <div style={{ fontSize: 13, color: C.tD, lineHeight: 1.55 }}>{children}</div>
+    </div>
+  );
+}
+
+// A looping, muted, autoplaying clip (behaves like a GIF) framed like a
+// PageStage. Falls back to a clean placeholder when the file isn't present.
+function VideoStage({ name, points = [] }) {
+  const src = tpVideo(name);
+  // Defined inside the component: reading C at module-eval time would crash
+  // because of the circular import with AIMExamManager (C isn't exported yet).
+  const tpFrame = {
+    position: "relative",
+    background: C.wW,
+    border: `1px solid ${C.bo}`,
+    borderRadius: 10,
+    overflow: "hidden",
+  };
+  return (
+    <div>
+      {src ? (
+        <div style={tpFrame}>
+          <video
+            src={src}
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="metadata"
+            aria-hidden
+            style={{ width: "100%", height: "auto", display: "block" }}
+          />
+        </div>
+      ) : (
+        <div
+          style={{
+            ...tpFrame,
+            aspectRatio: "16 / 9",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div style={{ textAlign: "center" }}>
+            <div aria-hidden style={{ fontSize: 30, marginBottom: 8 }}>🎬</div>
+            <div style={{ fontFamily: serif, fontSize: 15, fontWeight: 700, color: C.tD }}>
+              Video folgt
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: C.mu,
+                marginTop: 6,
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              }}
+            >
+              {name}.mp4
+            </div>
+          </div>
+        </div>
+      )}
+      {points.length > 0 && <PointList points={points} />}
+    </div>
+  );
+}
+
+// A sub-section card inside a step (used for Schritt 4 & 5 sub-areas).
+function SubStep({ label, name, points }) {
+  return (
+    <div
+      style={{
+        background: C.wh,
+        border: `1px solid ${C.bo}`,
+        borderRadius: 10,
+        padding: 16,
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ fontFamily: serif, fontSize: 15, fontWeight: 700, color: C.tD, marginBottom: 12 }}>
+        {label}
+      </div>
+      <VideoStage name={name} points={points} />
+    </div>
+  );
+}
+
+// Testportal step definitions. Texts are intentionally non-technical German.
+const TP_STEPS = [
+  {
+    title: "Bei Testportal anmelden",
+    lead:
+      "Testportal läuft im Browser. Melde dich mit dem offiziellen AIM-Konto an — also demselben Konto, mit dem alle AIM-Prüfungen verwaltet werden, nicht mit einem privaten Login.",
+    video: "01-login",
+    points: [
+      "Im Browser www.testportal.com öffnen.",
+      "Oben rechts auf „Sign in“ / „Anmelden“ klicken.",
+      "Mit den offiziellen AIM-Zugangsdaten anmelden.",
+      "Nach der Anmeldung landest du auf der Test-Übersicht „My tests“.",
+    ],
+  },
+  {
+    title: "Die Startseite „My tests“ verstehen",
+    lead:
+      "Nach dem Login siehst du alle Tests des Kontos. Diese Übersicht ist der Ausgangspunkt für jede Prüfung — egal ob neu anlegen, bearbeiten oder auswerten.",
+    video: "02-startseite",
+    points: [
+      "Jede Kachel ist ein Test mit Status: ACTIVE (läuft), ENDED (beendet) oder SETUP IN PROGRESS (in Einrichtung).",
+      "Oben rechts: „New test“ legt einen neuen Test an. „Generate questions“ wird für AIM nicht benötigt.",
+      "Mit „Category“ und „Status“ lässt sich die Liste filtern, wenn viele Tests vorhanden sind.",
+      "Ein Klick auf eine Kachel öffnet den jeweiligen Test.",
+    ],
+  },
+  {
+    title: "Fragen aus dem AIM Prüfungs-Manager importieren",
+    lead:
+      "Du musst keine Fragen abtippen. Lade einfach die Datei hoch, die du im AIM Prüfungs-Manager unter „Export & Download“ erzeugt hast — Testportal baut daraus den Test.",
+    video: "03-import",
+    points: [
+      "Auf „New test“ klicken und „Import test“ wählen.",
+      "Die im AIM Prüfungs-Manager als Word-Datei (.docx) exportierte Datei hochladen.",
+      "Wichtig: Testportal erkennt fett markierten Text automatisch als die richtige Antwort — genau so exportiert die AIM-App.",
+      "Auf „Import“ klicken. Aus der Datei entsteht ein neuer Test mit allen Fragen.",
+      "Der Test steht danach auf „Setup in progress“ und wird im nächsten Schritt eingerichtet.",
+    ],
+  },
+  {
+    title: "Den Test konfigurieren",
+    lead:
+      "Nach dem Import richtest du den Test ein: Punkte, Zeit, Bestehensgrenze und Zugang. Links findest du alle Einstellungs-Bereiche, oben den Fortschritt in Prozent. Erst wenn alles kontrolliert ist, wird der Test über „Activate test“ freigegeben.",
+    video: "04-konfiguration",
+    points: [
+      "Links: die Einstellungs-Bereiche (Basic settings, Questions manager, …).",
+      "Oben: der Fortschrittsbalken zeigt, wie vollständig der Test eingerichtet ist.",
+      "Unten links: der grüne Knopf „Activate test“ gibt den Test frei — erst nach der Kontrolle drücken.",
+      "Rechts fasst die „Configuration summary“ alle wichtigen Einstellungen für die Schlusskontrolle zusammen.",
+    ],
+    subSteps: [
+      {
+        label: "Basic settings — Name & Beschreibung",
+        name: "04a-basic-settings",
+        points: [
+          "Einen klaren Testnamen vergeben, z. B. „AIM Prüfung – WBS 55 (2020)“.",
+          "So ist der Test später bei Resultaten und Rückfragen eindeutig zuzuordnen.",
+        ],
+      },
+      {
+        label: "Questions manager — Fragen kontrollieren",
+        name: "04b-questions-manager",
+        points: [
+          "Alle importierten Fragen durchsehen.",
+          "Bei jeder Frage muss die richtige Antwort markiert sein (sonst warnt Testportal in der Zusammenfassung).",
+          "Punktzahl pro Frage prüfen; Reihenfolge lässt sich hier ändern.",
+        ],
+      },
+      {
+        label: "Test sets — Varianten erzeugen",
+        name: "04c-test-sets",
+        points: [
+          "Mehrere Sets erstellen, damit nicht alle dieselbe Reihenfolge sehen.",
+          "„Select all“ aktiv lassen, damit wirklich alle Sets genutzt werden.",
+        ],
+      },
+      {
+        label: "Test access — Zugang absichern",
+        name: "04d-test-access",
+        points: [
+          "Zugangsart festlegen (für AIM meist „Public Link“).",
+          "Anzahl Zugriffe = 2, damit Lernende nach einem technischen Unterbruch erneut einsteigen können.",
+          "Versuche = 1. Warnungen bei Browser-Wechsel aktiv lassen.",
+        ],
+      },
+      {
+        label: "Test start page — Begrüßungsseite",
+        name: "04e-test-start-page",
+        points: [
+          "Die Seite, die Studierende direkt vor dem Start sehen.",
+          "Kurze Begrüßung und Hinweise zum Ablauf hinterlegen.",
+        ],
+      },
+      {
+        label: "Grading & summary — Punkte & Bestehensgrenze",
+        name: "04f-grading-summary",
+        points: [
+          "Mit Punkten und möglichst geraden Zahlen arbeiten (keine Dezimalbewertung).",
+          "Bestehensgrenze (Pass mark) setzen, z. B. 50 %.",
+          "Richtige Antworten während des laufenden Tests NICHT anzeigen.",
+        ],
+      },
+      {
+        label: "Time settings — Zeit & Termin",
+        name: "04g-time-settings",
+        points: [
+          "Gesamtdauer oder Zeit pro Frage festlegen.",
+          "Aktivierungszeit und Endzeit terminieren.",
+          "Rücksprung-Option ausschalten, wenn kein Zurückblättern erlaubt sein soll.",
+        ],
+      },
+    ],
+    note: "Den Bereich „Certificate template“ braucht AIM nicht — er kann übersprungen werden.",
+  },
+  {
+    title: "Den Test aktivieren und durchführen",
+    lead:
+      "Wenn alles kontrolliert ist, aktivierst du den Test und teilst den Link mit der Klasse. Während und nach der Prüfung verfolgst du den Ablauf und sicherst die Resultate über die Bereiche unter „Test progress & results“.",
+    video: "05-durchfuehrung",
+    points: [
+      "Unten links auf „Activate test“ klicken — der Test wird scharf geschaltet.",
+      "Den Test-Link kopieren und an die richtige Klasse senden (z. B. über Microsoft Teams).",
+      "Der Link öffnet sich für Studierende erst ab der eingestellten Aktivierungszeit.",
+      "Nach der Prüfung wird der Test über „End test“ beendet.",
+    ],
+    subSteps: [
+      {
+        label: "Respondent monitoring — Teilnahme live verfolgen",
+        name: "05a-respondent-monitoring",
+        points: [
+          "Sehen, wer gerade teilnimmt und wie weit die Person ist.",
+          "Warnungen (z. B. Browser-Wechsel) werden hier angezeigt.",
+        ],
+      },
+      {
+        label: "Results table — Resultate herunterladen",
+        name: "05b-results-table",
+        points: [
+          "Tabelle aller Ergebnisse.",
+          "Alle Teilnehmenden markieren und die Resultate gesammelt herunterladen.",
+          "Die Spalten lassen sich auf das Nötige reduzieren.",
+        ],
+      },
+      {
+        label: "Test sheets review — einzelne Bögen ansehen",
+        name: "05c-test-sheets-review",
+        points: [
+          "Den ausgefüllten Testbogen einzelner Studierender öffnen.",
+          "Nützlich bei Rückfragen oder zur Kontrolle.",
+        ],
+      },
+      {
+        label: "Answers review — offene Antworten bewerten",
+        name: "05d-answers-review",
+        points: [
+          "Offene (descriptive) Antworten manuell bewerten.",
+          "Bei reinen Single-/Multiple-Choice-Prüfungen meist nicht nötig.",
+        ],
+      },
+      {
+        label: "Statistics — Auswertung pro Frage",
+        name: "05e-statistics",
+        points: [
+          "Zeigt, wie viele eine Frage richtig beantwortet haben.",
+          "Macht zu schwere oder missverständliche Fragen sichtbar.",
+        ],
+      },
+      {
+        label: "Unused codes — nicht genutzte Zugänge",
+        name: "05f-unused-codes",
+        points: [
+          "Nur bei Zugang über Einzel-Codes relevant.",
+          "Zeigt, welche Codes noch nicht verwendet wurden.",
+        ],
+      },
+    ],
+  },
+  {
+    title: "Einen beendeten Test erneut starten (mit Änderungen)",
+    lead:
+      "Ein bereits beendeter Test lässt sich wiederverwenden — entweder unverändert erneut aktivieren oder als Kopie, wenn du etwas ändern willst (neue Klasse, neuer Termin, andere Fragen).",
+    video: "06-test-erneut-starten",
+    points: [
+      "Den beendeten Test (Status ENDED) in „My tests“ öffnen.",
+      "Unverändert wiederholen: in „Time settings“ neue Zeiten setzen und erneut „Activate test“.",
+      "Mit Änderungen: über das „…“-Menü „Copy/Duplicate“ wählen — es entsteht „… - copy“ in „Setup in progress“.",
+      "In der Kopie die Anpassungen vornehmen (Fragen, Punkte, Zeit) und dann aktivieren.",
+      "Tipp: Resultate des alten Tests vorher herunterladen, damit nichts verloren geht.",
+    ],
+  },
+];
+
+// ─── guide bodies ──────────────────────────────────────────────────────────
+
+function AimGuide() {
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 13,
+          color: C.mu,
+          background: C.wW,
+          border: `1px solid ${C.bo}`,
+          borderRadius: 8,
+          padding: "10px 14px",
+          marginBottom: 24,
+          lineHeight: 1.55,
+        }}
+      >
+        Die Bildschirme unten sind die <strong>echte App</strong>. Ein Cursor zeigt nacheinander jedes
+        wichtige Bedienelement. Klicks hier sind nur zur Ansicht — du kannst nichts kaputt machen.
+      </div>
+
+      <TourSection
+        index={1}
+        title="Dashboard — die Startseite"
+        lead="Beim Öffnen der App landest du hier. Du siehst sofort, wie viele Fragen, Kurse und Weiterbildungsgänge in der App sind, hast Schnellzugriff auf die wichtigsten Aktionen und findest hier auch die Datensicherung."
+        stage={<StageDashboard />}
+      />
+
+      <TourSection
+        index={2}
+        title="Fragen Datenbank — alle Fragen verwalten"
+        lead="Hier verwaltest du alle Fragen. Eine Frage gehört zu einem Kurs und erscheint automatisch in allen Weiterbildungsgängen, die diesen Kurs unterrichten. Im Bearbeiten-Modus kannst du Fragen hinzufügen, bearbeiten oder löschen — sonst ist die Tabelle gesperrt, um versehentliche Änderungen zu verhindern."
+        stage={<StageQuestionDB />}
+      />
+
+      <TourSection
+        index={3}
+        title="Weiterbildungsgänge — Semester und Module pflegen"
+        lead="Pro Weiterbildungsgang erfasst du sechs Semester mit je vier Modulen. Jedes Modul ist ein Kurs mit Jahr und Dozent/in. Mit der Sperre verhinderst du Tippfehler im Alltag; im Bearbeiten-Modus kannst du jede Zelle ändern."
+        stage={<StageProgramsView />}
+      />
+
+      <TourSection
+        index={4}
+        title="Prüfung erstellen — Module auswählen, Prüfung bauen"
+        lead="Wähle einen Weiterbildungsgang und aktiviere die Module, aus denen die Prüfung zusammengestellt werden soll. Die App sammelt automatisch alle Fragen, die zu den gewählten Modulen passen. Der Standard sind 40 Fragen — die Zahl wird grün, wenn dieser Wert erreicht ist."
+        stage={<StageExamBuilder />}
+      />
+
+      <TourSection
+        index={5}
+        title="Export & Download — als Word-Datei speichern"
+        lead='Hier wird die Prüfung exportiert. Klick auf "↓ Word (.docx)" — die Word-Datei wird sofort heruntergeladen und lässt sich direkt im Testportal hochladen. Die korrekten Antworten sind fett markiert, damit Testportal sie automatisch erkennt.'
+        stage={<StageExportView />}
+      />
+
+      <TourSection
+        index={6}
+        title="Einstellungen — Standardverhalten anpassen"
+        lead="Hier legst du fest, wie sich die App standardmäßig verhält: ob die Weiterbildungsgang-Übersicht beim Start gesperrt ist, welche Zoomstufe voreingestellt ist und ob Hellmodus oder Dunkelmodus aktiv sein soll."
+        stage={<StageSettings />}
+      />
+
+      <h2
+        style={{
+          fontFamily: serif,
+          fontSize: 20,
+          color: C.tD,
+          margin: "32px 0 12px",
+          fontWeight: 700,
+        }}
+      >
+        Probier es aus
+      </h2>
+      <Checklist />
+    </>
+  );
+}
+
+function TestportalGuide() {
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 13,
+          color: C.mu,
+          background: C.wW,
+          border: `1px solid ${C.bo}`,
+          borderRadius: 8,
+          padding: "10px 14px",
+          marginBottom: 24,
+          lineHeight: 1.55,
+        }}
+      >
+        Testportal ist die Online-Plattform, auf der die Prüfung tatsächlich durchgeführt wird. Die
+        kurzen Videos unten laufen in Schleife und zeigen für jeden Schritt, wo du klickst.
+      </div>
+
+      {TP_STEPS.map((step, i) => (
+        <TourSection
+          key={step.video}
+          index={i + 1}
+          title={step.title}
+          lead={step.lead}
+          stage={
+            <>
+              <VideoStage name={step.video} points={step.points} />
+              {step.subSteps && (
+                <div style={{ marginTop: 18 }}>
+                  {step.subSteps.map((sub) => (
+                    <SubStep key={sub.name} label={sub.label} name={sub.name} points={sub.points} />
+                  ))}
+                </div>
+              )}
+              {step.note && <InfoNote icon="ℹ️">{step.note}</InfoNote>}
+            </>
+          }
+        />
+      ))}
+    </>
+  );
+}
+
 // ─── main page ───────────────────────────────────────────────────────────
 
-export default function AboutPage() {
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        appearance: "none",
+        background: active ? C.tD : "transparent",
+        color: active ? "#fff" : C.tx,
+        border: `1px solid ${active ? C.tD : C.bo}`,
+        borderRadius: 999,
+        padding: "8px 18px",
+        fontFamily: sans,
+        fontSize: 13.5,
+        fontWeight: active ? 700 : 500,
+        cursor: "pointer",
+        transition: "background 0.15s, color 0.15s, border-color 0.15s",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+export default function AnleitungPage() {
   const [version, setVersion] = useState("");
   useEffect(() => {
     if (typeof window !== "undefined" && window.aim?.getAppVersion) {
@@ -1019,16 +1500,32 @@ export default function AboutPage() {
     }
   }, []);
 
+  const [tab, setTab] = useState(() => {
+    try {
+      return window.localStorage.getItem("aim_anleitung_tab") || "aim";
+    } catch {
+      return "aim";
+    }
+  });
+  const selectTab = (t) => {
+    setTab(t);
+    try {
+      window.localStorage.setItem("aim_anleitung_tab", t);
+    } catch {
+      /* non-essential */
+    }
+  };
+
   return (
     <div style={{ padding: 28, fontFamily: sans, maxWidth: 1200 }}>
-      <style id="aim-about-styles">{`
+      <style id="aim-anleitung-styles">{`
         @keyframes aim-tour-ring { from { transform: scale(0.6); opacity: 1; } to { transform: scale(1.8); opacity: 0; } }
         @media (prefers-reduced-motion: reduce) {
-          .aim-about * { animation: none !important; transition: none !important; }
+          .aim-anleitung * { animation: none !important; transition: none !important; }
         }
       `}</style>
 
-      <div className="aim-about">
+      <div className="aim-anleitung">
         {/* Hero */}
         <div
           style={{
@@ -1037,7 +1534,7 @@ export default function AboutPage() {
             border: `1px solid ${C.tL}`,
             borderRadius: 12,
             padding: "28px 32px",
-            marginBottom: 28,
+            marginBottom: 24,
           }}
         >
           <div
@@ -1050,7 +1547,7 @@ export default function AboutPage() {
               marginBottom: 6,
             }}
           >
-            Willkommen
+            Anleitung
           </div>
           <h1
             style={{
@@ -1061,7 +1558,7 @@ export default function AboutPage() {
               fontWeight: 700,
             }}
           >
-            So funktioniert der AIM Prüfungs-Manager
+            AIM Prüfungs-Manager & Testportal
           </h1>
           <p
             style={{
@@ -1072,77 +1569,42 @@ export default function AboutPage() {
               maxWidth: 820,
             }}
           >
-            Diese App hilft dir, Prüfungsfragen zu sammeln, Weiterbildungsgänge
-            zu pflegen und daraus Prüfungen für das Testportal zu erstellen — alles
-            lokal, ohne Internetverbindung. Die folgenden Bildschirme zeigen jede
-            Seite der App in voller Auflösung. Der Cursor wandert nacheinander zu
-            jedem wichtigen Bedienelement und erklärt es. Klicks in diesen
-            Bildschirmen sind nur Anschauungszwecken — drücke nichts kaputt,
-            probiere alles aus.
+            Diese Anleitung zeigt den kompletten Weg: zuerst, wie du im AIM Prüfungs-Manager
+            Fragen verwaltest und daraus eine Prüfung baust — und danach, wie du diese Prüfung ins
+            Testportal lädst, dort einrichtest (Punkte, Zeit, Bestehensgrenze) und live mit
+            Studierenden durchführst. Wähle unten den passenden Bereich. Alles ist auf Deutsch und
+            Schritt für Schritt erklärt.
           </p>
         </div>
 
-        <TourSection
-          index={1}
-          title="Dashboard — die Startseite"
-          lead="Beim Öffnen der App landest du hier. Du siehst sofort wie viele Fragen, Kurse und Weiterbildungsgänge in der App sind, hast Schnellzugriff auf die wichtigsten Aktionen und findest hier auch die Datensicherung."
-          stage={<StageDashboard />}
-        />
-
-        <TourSection
-          index={2}
-          title="Fragen Datenbank — alle Fragen verwalten"
-          lead="Hier verwaltest du alle Fragen. Eine Frage gehört zu einem Kurs und erscheint automatisch in allen Weiterbildungsgängen, die diesen Kurs unterrichten. Im Bearbeiten-Modus kannst du Fragen hinzufügen, bearbeiten oder löschen — sonst ist die Tabelle gesperrt, um versehentliche Änderungen zu verhindern."
-          stage={<StageQuestionDB />}
-        />
-
-        <TourSection
-          index={3}
-          title="Weiterbildungsgänge — Semester und Module pflegen"
-          lead="Pro Weiterbildungsgang erfasst du sechs Semester mit je vier Modulen. Jedes Modul ist ein Kurs mit Jahr und Dozent/in. Mit der Sperre verhinderst du Tippfehler im Alltag; im Bearbeiten-Modus kannst du jede Zelle ändern."
-          stage={<StageProgramsView />}
-        />
-
-        <TourSection
-          index={4}
-          title="Prüfung erstellen — Module auswählen, Prüfung bauen"
-          lead="Wähle einen Weiterbildungsgang und aktiviere die Module, aus denen die Prüfung zusammengestellt werden soll. Die App sammelt automatisch alle Fragen, die zu den gewählten Modulen passen. Der Standard sind 40 Fragen — die Zahl wird grün, wenn dieser Wert erreicht ist."
-          stage={<StageExamBuilder />}
-        />
-
-        <TourSection
-          index={5}
-          title="Export & Download — als PDF speichern"
-          lead='Hier wird die Prüfung exportiert. Klick auf "↓ Als PDF speichern" — im sich öffnenden Druckdialog wählst du "Als PDF sichern". Die fertige PDF lässt sich direkt im Testportal hochladen.'
-          stage={<StageExportView />}
-        />
-
-        <TourSection
-          index={6}
-          title="Einstellungen — Standardverhalten anpassen"
-          lead="Hier legst du fest, wie sich die App standardmäßig verhält: ob die Weiterbildungsgang-Übersicht beim Start gesperrt ist, welche Zoomstufe voreingestellt ist und ob Hellmodus oder Dunkelmodus aktiv sein soll."
-          stage={<StageSettings />}
-        />
-
-        <h2
+        {/* Tab switcher */}
+        <div
           style={{
-            fontFamily: serif,
-            fontSize: 20,
-            color: C.tD,
-            margin: "32px 0 12px",
-            fontWeight: 700,
+            display: "flex",
+            gap: 10,
+            marginBottom: 26,
+            paddingBottom: 18,
+            borderBottom: `1px solid ${C.bo}`,
+            flexWrap: "wrap",
           }}
         >
-          Probier es aus
-        </h2>
-        <Checklist />
+          <TabButton active={tab === "aim"} onClick={() => selectTab("aim")}>
+            AIM Prüfungs-Manager
+          </TabButton>
+          <TabButton active={tab === "testportal"} onClick={() => selectTab("testportal")}>
+            Testportal
+          </TabButton>
+        </div>
 
+        {tab === "aim" ? <AimGuide /> : <TestportalGuide />}
+
+        {/* Footer: Über die App */}
         <h2
           style={{
             fontFamily: serif,
             fontSize: 20,
             color: C.tD,
-            margin: "32px 0 12px",
+            margin: "36px 0 12px",
             fontWeight: 700,
           }}
         >

@@ -25,6 +25,7 @@ function applyCsp() {
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
     "object-src 'none'",
@@ -66,30 +67,14 @@ function createWindow() {
   });
   ws.manage(mainWindow);
 
-  // External links always open in the system browser, never inside the app.
-  // BUT we MUST allow `window.open('', '_blank')` for the print-window flow
-  // — `printAsPdf` and `printHelpManualPdf` open a blank window, write the
-  // print HTML into it via document.write(), and call w.print(). If we deny
-  // blank/about:blank, those functions silently no-op and clicking "PDF
-  // drucken" appears to do nothing.
+  // External http(s) links open in the system browser; every other window
+  // request is denied. The app is a SPA and no longer opens any child window:
+  // the old print-PDF and handbook-PDF flows that needed
+  // `window.open('', '_blank')` were removed — export now downloads a .docx via
+  // an <a download> blob, which needs no window.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) {
       shell.openExternal(url);
-      return { action: "deny" };
-    }
-    if (!url || url === "about:blank") {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          autoHideMenuBar: true,
-          backgroundColor: "#ffffff",
-          webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-          },
-        },
-      };
     }
     return { action: "deny" };
   });

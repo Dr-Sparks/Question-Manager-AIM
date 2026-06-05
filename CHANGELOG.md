@@ -4,6 +4,58 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.17] — 2026-06-05
+
+### Geändert
+- **Export für Testportal jetzt als Word-Datei (.docx) statt PDF.** Der Button
+  „↓ Als PDF speichern" heißt nun „↓ Word (.docx)" und lädt die Prüfung direkt
+  als Word-Datei herunter (kein Druck-Dialog mehr).
+
+### Behoben
+- **Testportal erkennt die korrekten Antworten beim Import jetzt zuverlässig.**
+  Ursache: In einer PDF ist „fett" nur eine Schriftart-Auswahl; bei der
+  Text-Extraktion durch Testportal ging diese Information verloren, sodass
+  keine richtige Antwort markiert wurde. Eine .docx speichert den Fettdruck als
+  explizite `<w:b/>`-Eigenschaft, die Testportal direkt ausliest — genau wie in
+  der offiziellen Testportal-Importvorlage. Nur die korrekte Antwortzeile ist
+  fett (inkl. Buchstaben-Präfix); Kurstitel, Frage und falsche Antworten bleiben
+  normal, damit keine falsche Antwort markiert wird.
+
+### Technisch
+- Die .docx wird ohne zusätzliche Abhängigkeit erzeugt (handgeschriebener
+  STORE-Zip aus OOXML-Teilen). `printAsPdf`/`escapeHtml` und der zugehörige
+  `window.open`-Druckfenster-Pfad entfielen; der Electron-`setWindowOpenHandler`
+  verweigert nun konsequent alle Kind-Fenster (nur externe Links öffnen im
+  System-Browser).
+
+## [1.0.16] — 2026-06-05
+
+### Geändert
+- **Neue Seite „Anleitung"** ersetzt die bisherigen Seiten „Hilfe & Anleitung"
+  und „Über die App" und bündelt beide Anleitungen an einem Ort:
+  - **AIM Prüfungs-Manager** — die geführte Tour durch die echte App
+    (animierter Cursor + Erklärungen, wie bisher unter „Über die App").
+  - **Testportal** — eine neue, nicht-technische Schritt-für-Schritt-Anleitung
+    (Anmelden → Startseite → Fragen importieren → Test konfigurieren →
+    aktivieren & durchführen → beendeten Test erneut starten) mit kurzen,
+    in Schleife laufenden Videos.
+
+### Hinzugefügt
+- Drop-in-Ordner `src/anleitung-media/testportal/` für die Testportal-Videos
+  (MP4/WebM). Fehlt ein Video, zeigt die Anleitung automatisch einen
+  „Video folgt"-Platzhalter. Dateinamen siehe `README.md` im Ordner.
+
+### Entfernt
+- Das editierbare Handbuch-System („Hilfe & Anleitung") inkl. Bild-Galerien,
+  Annotations-Editor und Handbuch-ZIP-Import/-Export.
+- Entwickler-Hilfsordner `handbook-build/` (Screenshot-Pipeline).
+
+### Technisch
+- `media-src 'self' blob:` zur Content-Security-Policy hinzugefügt, damit die
+  Loop-Videos in der gepackten App laden.
+- JSON-Backups enthalten keine Handbuch-/Galerie-Inhalte mehr; das
+  Wiederherstellen älterer Backups ignoriert diese Felder verträglich.
+
 ## [1.0.15] — 2026-05-18
 
 ### Hinzugefügt

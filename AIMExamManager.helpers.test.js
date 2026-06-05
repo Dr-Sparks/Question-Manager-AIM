@@ -4,8 +4,11 @@ import {
   COURSE_SLOT_COUNT,
   autoSelectQuestions,
   autofillModulesForProgram,
+  buildDocx,
+  buildDocxDocumentXml,
   buildExportPayload,
   computeExcelImportDiff,
+  docxEsc,
   migrateCourseTagsFromMatrix,
   normalizeSlots,
   programsForQuestion,
@@ -700,4 +703,104 @@ test("computeExcelImportDiff: saved exam matched by ID gets updated, otherwise a
   assert.equal(diff.savedExams.update[0].after.name, "Exam 1 (revised)");
   assert.equal(diff.savedExams.add.length, 1);
   assert.equal(diff.savedExams.add[0].id, "ex2");
+});
+
+// ── Word (.docx) export for Testportal import ────────────────────────────────
+// The whole point of the .docx export is that Testportal detects the correct
+// answer from the BOLD run. These tests lock in: ONLY correct-answer lines are
+// bold, nothing else is, escaping/umlauts survive, and the bytes are a real zip.
+
+const docxQ = (over = {}) => ({
+  course: "Psychoonkologie",
+  question: "Welche Intervention ist angezeigt?",
+  optA: "Antwort A",
+  optB: "Antwort B",
+  optC: "Antwort C",
+  optD: "Antwort D",
+  answer: "A",
+  ...over,
+});
+
+// Extract { text, bold } for each real <w:p> paragraph (skips <w:pPr>/<w:bCs/>).
+function docxParagraphs(xml) {
+  const ps = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
+  return ps
+    .map((p) => ({
+      text: [...p.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map((m) => m[1]).join(""),
+      bold: /<w:b\/>/.test(p),
+    }))
+    .filter((x) => x.text.trim() !== "");
+}
+
+test("buildDocxDocumentXml: single-choice bolds ONLY the correct answer line", () => {
+  const ps = docxParagraphs(buildDocxDocumentXml([docxQ({ answer: "A" })]));
+  const find = (pre) => ps.find((p) => p.text.startsWith(pre));
+  assert.equal(find("a)").bold, true);
+  assert.equal(find("b)").bold, false);
+  assert.equal(find("c)").bold, false);
+  assert.equal(find("d)").bold, false);
+  assert.equal(ps.find((p) => p.text.includes("Titel des Kurses")).bold, false);
+  assert.equal(ps.find((p) => p.text.includes("Welche Intervention")).bold, false);
+  assert.equal(ps.filter((p) => p.bold).length, 1, "exactly one bold paragraph");
+});
+
+test("buildDocxDocumentXml: bold includes the letter prefix (matches import template)", () => {
+  const xml = buildDocxDocumentXml([docxQ({ answer: "A" })]);
+  // The "a) " prefix sits inside the same <w:t> as the bold run, so the whole
+  // option line — letter included — is bold, exactly like the working file.
+  assert.match(xml, /<w:b\/><w:bCs\/>[\s\S]*?<w:t[^>]*>a\) Antwort A<\/w:t>/);
+});
+
+test("buildDocxDocumentXml: multiple-choice bolds every marked answer (A;B;D)", () => {
+  const ps = docxParagraphs(buildDocxDocumentXml([docxQ({ answer: "A;B;D" })]));
+  const bold = ps.filter((p) => p.bold).map((p) => p.text.slice(0, 2)).sort();
+  assert.deepEqual(bold, ["a)", "b)", "d)"]);
+});
+
+test("buildDocxDocumentXml: a question with no marked answer has zero bold runs", () => {
+  // No bold => Testportal imports it without a (wrong) correct answer.
+  const ps = docxParagraphs(buildDocxDocumentXml([docxQ({ answer: "" })]));
+  assert.equal(ps.filter((p) => p.bold).length, 0);
+});
+
+test("buildDocxDocumentXml: only options with text become answer lines", () => {
+  const ps = docxParagraphs(
+    buildDocxDocumentXml([docxQ({ optC: "", optD: "", optE: "", answer: "A" })])
+  );
+  assert.ok(ps.some((p) => p.text.startsWith("a)")));
+  assert.ok(ps.some((p) => p.text.startsWith("b)")));
+  assert.ok(!ps.some((p) => p.text.startsWith("c)")));
+});
+
+test("docxEsc escapes XML metacharacters and tolerates null/undefined", () => {
+  assert.equal(docxEsc('a & b < c > d " e'), "a &amp; b &lt; c &gt; d &quot; e");
+  assert.equal(docxEsc(null), "");
+  assert.equal(docxEsc(undefined), "");
+});
+
+test("buildDocxDocumentXml: ampersand in answer text is escaped and stays bold", () => {
+  const xml = buildDocxDocumentXml([docxQ({ optA: "Körper & Psyche", answer: "A" })]);
+  assert.match(xml, /Körper &amp; Psyche/);
+  const a = docxParagraphs(xml).find((p) => p.text.startsWith("a)"));
+  assert.equal(a.bold, true);
+});
+
+test("buildDocx returns a Uint8Array zip containing the three OOXML parts", () => {
+  const bytes = buildDocx([docxQ()]);
+  assert.ok(bytes instanceof Uint8Array);
+  // ZIP local file header magic 'PK\x03\x04' and end-of-central-dir 'PK\x05\x06'.
+  assert.deepEqual([...bytes.slice(0, 4)], [0x50, 0x4b, 0x03, 0x04]);
+  const raw = new TextDecoder("latin1").decode(bytes);
+  assert.ok(raw.includes("[Content_Types].xml"));
+  assert.ok(raw.includes("_rels/.rels"));
+  assert.ok(raw.includes("word/document.xml"));
+  assert.ok(raw.includes("PK\x05\x06"), "end-of-central-directory record present");
+});
+
+test("buildDocx encodes umlauts/ß as UTF-8 bytes", () => {
+  const bytes = buildDocx([docxQ({ question: "Übung über Maßnahmen", answer: "A" })]);
+  // 'Ü' = U+00DC -> 0xC3 0x9C ; 'ß' = U+00DF -> 0xC3 0x9F
+  const hasSeq = (a, b) => bytes.some((v, i) => v === a && bytes[i + 1] === b);
+  assert.ok(hasSeq(0xc3, 0x9c), "UTF-8 bytes for Ü");
+  assert.ok(hasSeq(0xc3, 0x9f), "UTF-8 bytes for ß");
 });

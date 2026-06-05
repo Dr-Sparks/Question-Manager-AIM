@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
-import JSZip from "jszip";
-import AboutPage from "./src/AboutPage.jsx";
+import AnleitungPage from "./src/AnleitungPage.jsx";
 
 // Color tokens — values come from CSS custom properties so dark/light mode works
-// Exported for re-use by src/AboutPage.jsx (tour scenes need pixel-identical
-// styling and primitives). The circular import (this file imports AboutPage,
-// AboutPage imports back from here) is safe because AboutPage only uses these
-// inside function bodies, not at module evaluation time.
+// Exported for re-use by src/AnleitungPage.jsx (tour scenes need pixel-identical
+// styling and primitives). The circular import (this file imports AnleitungPage,
+// AnleitungPage imports back from here) is safe because AnleitungPage only uses
+// these inside function bodies, not at module evaluation time.
 export const C={tD:'var(--c-tD)',t:'var(--c-t)',tM:'var(--c-tM)',tL:'var(--c-tL)',tP:'var(--c-tP)',wW:'var(--c-wW)',st:'var(--c-st)',tx:'var(--c-tx)',mu:'var(--c-mu)',bo:'var(--c-bo)',ac:'var(--c-ac)',wh:'var(--c-wh)',re:'var(--c-re)',rP:'var(--c-rP)',gr:'var(--c-gr)',gP:'var(--c-gP)'};
 const THEMES={
   light:`
@@ -1268,38 +1267,87 @@ function previewExcelImport(file, current, onPreview, showToast){
   reader.readAsArrayBuffer(file);
 }
 
-// NOTE: All interpolations into the printed HTML go through escapeHtml().
-// The questions can come from user-supplied Excel or JSON imports, so without
-// escaping a poisoned import could XSS the print window (file:// origin in
-// the packaged Electron build = local file access).
-//
-// Returns true on success, false if the print window couldn't be opened.
-// Callers should surface a toast on false so the user gets feedback instead
-// of a silent no-op.
-function printAsPdf(qs,title){
-  const w=window.open('','_blank');
-  if(!w)return false;
-  const body=qs.map((q,i)=>{
+// ─── Word (.docx) export for Testportal import ─────────────────────────────
+// Testportal detects the correct answer from BOLD text. A PDF can't carry
+// "bold" reliably: in a PDF, bold is only a font choice, and text extraction
+// discards the font association — so Testportal sees every line as the same
+// weight and marks no correct answer. A .docx stores bold as an explicit
+// <w:b/> run property that Testportal reads directly, so the correct answers
+// come through every time (this matches Testportal's own import template).
+// We build the .docx by hand as a STORE (uncompressed) zip of OOXML parts so
+// there is no third-party dependency.
+
+function docxEsc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+// One <w:p> paragraph. bold=true wraps the run in <w:b/><w:bCs/>.
+function docxPara(text,bold){
+  const rpr=`<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>${bold?'<w:b/><w:bCs/>':''}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>`;
+  return `<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>${rpr}<w:t xml:space="preserve">${docxEsc(text)}</w:t></w:r></w:p>`;
+}
+function buildDocxDocumentXml(qs){
+  const blocks=qs.map((q,i)=>{
     const correct=q.answer?q.answer.split(';'):[];
     const opts=[{k:'A',t:q.optA},{k:'B',t:q.optB},{k:'C',t:q.optC},{k:'D',t:q.optD},{k:'E',t:q.optE}].filter(o=>o.t);
-    const optsHtml=opts.map(o=>{
-      const isC=correct.includes(o.k);
-      return`<p style="margin:1px 0 1px 14px;font-weight:${isC?'bold':'normal'}">${escapeHtml(o.k.toLowerCase())}) ${escapeHtml(o.t)}</p>`;
-    }).join('');
-    // IMPORTANT: only the CORRECT answer gets font-weight:bold. The question
-    // stem and the wrong answers MUST be normal weight, otherwise Testportal's
-    // import scanner can't distinguish which option is the correct answer.
-    return`<div style="margin-bottom:16px"><p style="margin:0 0 3px;font-style:italic;text-decoration:underline;font-weight:normal">${i+1}. Titel des Kurses: ${escapeHtml(q.course||'')}</p><p style="margin:0 0 4px;font-weight:normal">${escapeHtml(q.question||'')}</p>${optsHtml}</div>`;
+    // IMPORTANT: ONLY the correct answer line is bold (the letter prefix is
+    // part of the bold run, exactly like the import template). The course
+    // title, the question stem and the wrong answers MUST stay normal weight —
+    // Testportal reads every bold run as a correct answer ("do not use bold
+    // for any other purpose"), so a stray bold would corrupt the answer key.
+    const head=docxPara(`${i+1}. Titel des Kurses: ${q.course||''}`,false);
+    const stem=docxPara(q.question||'',false);
+    const answers=opts.map(o=>docxPara(`${o.k.toLowerCase()}) ${o.t}`,correct.includes(o.k))).join('');
+    const spacer='<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>';
+    return head+stem+answers+spacer;
   }).join('');
-  // System fonts only — print window is offline-safe, no CDN dependency.
-  // afterprint listener self-closes the window after print/save-as-PDF or
-  // cancel so it doesn't linger in the dock. The script has no user input,
-  // so injecting it inline is safe even with the existing CSP elsewhere.
-  w.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(title||'AIM Pruefung')}</title><style>body{font-family:Calibri,Helvetica,Arial,sans-serif;font-size:10pt;margin:0.5cm}@media print{@page{margin:0.5cm}}</style></head><body>${body}<script>window.addEventListener('afterprint',function(){try{window.close();}catch(e){}});</script></body></html>`);
-  w.document.close();
-  w.focus();
-  setTimeout(()=>w.print(),400);
-  return true;
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+blocks+
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>'+
+    '</w:body></w:document>';
+}
+const DOCX_CONTENT_TYPES='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+const DOCX_RELS='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+
+function crc32(b){
+  let crc=0xFFFFFFFF;
+  for(let i=0;i<b.length;i++){
+    let c=(crc^b[i])&0xFF;
+    for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);
+    crc=(crc>>>8)^c;
+  }
+  return(crc^0xFFFFFFFF)>>>0;
+}
+// Minimal STORE (uncompressed) zip writer — valid enough for a .docx that Word
+// and Testportal both parse. Portable across the Electron renderer (TextEncoder,
+// Uint8Array). Filenames/data are ASCII+UTF-8; never spreads the large data
+// array, so it is safe for big exams.
+function zipStore(files){
+  const enc=new TextEncoder();
+  const u16=n=>[n&0xFF,(n>>>8)&0xFF];
+  const u32=n=>[n&0xFF,(n>>>8)&0xFF,(n>>>16)&0xFF,(n>>>24)&0xFF];
+  const chunks=[],central=[];let offset=0;
+  for(const f of files){
+    const nameB=enc.encode(f.name),dataB=enc.encode(f.data),crc=crc32(dataB);
+    const local=[...u32(0x04034b50),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(dataB.length),...u32(dataB.length),...u16(nameB.length),...u16(0),...nameB];
+    chunks.push(Uint8Array.from(local),dataB);
+    central.push([...u32(0x02014b50),...u16(20),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(dataB.length),...u32(dataB.length),...u16(nameB.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(offset),...nameB]);
+    offset+=local.length+dataB.length;
+  }
+  const cdStart=offset;const cd=[];
+  for(const c of central){cd.push(...c);offset+=c.length;}
+  const eocd=[...u32(0x06054b50),...u16(0),...u16(0),...u16(files.length),...u16(files.length),...u32(offset-cdStart),...u32(cdStart),...u16(0)];
+  const out=new Uint8Array(cdStart+cd.length+eocd.length);let p=0;
+  for(const ch of chunks){out.set(ch,p);p+=ch.length;}
+  out.set(Uint8Array.from(cd),p);p+=cd.length;out.set(Uint8Array.from(eocd),p);
+  return out;
+}
+// Returns the .docx file as a Uint8Array, ready to hand to dlFile().
+function buildDocx(qs){
+  return zipStore([
+    {name:'[Content_Types].xml',data:DOCX_CONTENT_TYPES},
+    {name:'_rels/.rels',data:DOCX_RELS},
+    {name:'word/document.xml',data:buildDocxDocumentXml(qs)},
+  ]);
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -1521,288 +1569,6 @@ function SettingRow({title,sub,control}){
   );
 }
 
-// ─── Image Slot (for Help page screenshots) ───────────────────────────────────
-const HELP_COLORS=['#d71920','#f08a00','#f2c230','#2563eb','#16a34a','#7c3aed','#111111'];
-let activeHelpSlotId=null;
-const mkHelpAnno=(type)=>({
-  id:`anno_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
-  type,
-  color:type==='text'?'#111111':'#d71920',
-  x:18,
-  y:18,
-  w:type==='arrow'?26:24,
-  h:type==='text'?12:18,
-  rotation:0,
-  text:type==='text'?'Text':'',
-});
-
-function getHelpGallery(storageId,legacyId){
-  try{
-    const gallery=window.localStorage.getItem(`aim_gallery_${storageId}`);
-    if(gallery){
-      const parsed=JSON.parse(gallery);
-      if(Array.isArray(parsed)) return parsed;
-    }
-    if(legacyId){
-      const legacyGallery=window.localStorage.getItem(`aim_gallery_${legacyId}`);
-      if(legacyGallery){
-        const parsed=JSON.parse(legacyGallery);
-        if(Array.isArray(parsed)) return parsed;
-      }
-    }
-    const legacy=window.localStorage.getItem(`aim_img_${legacyId||storageId}`);
-    if(legacy){
-      return [{id:`img_${Date.now()}`,src:legacy,annotations:[]}];
-    }
-  }catch{}
-  return [];
-}
-
-function saveHelpGallery(storageId,items){
-  try{
-    window.localStorage.setItem(`aim_gallery_${storageId}`,JSON.stringify(items));
-    window.localStorage.removeItem(`aim_img_${storageId}`);
-  }catch{}
-}
-
-function renderHelpAnnotation(anno){
-  const base={position:'absolute',left:`${anno.x}%`,top:`${anno.y}%`,pointerEvents:'none',transform:`rotate(${anno.rotation||0}deg)`};
-  if(anno.type==='box'){
-    return <div key={anno.id} style={{...base,width:`${anno.w}%`,height:`${anno.h}%`,border:`3px solid ${anno.color}`,borderRadius:6,boxSizing:'border-box',transformOrigin:'center center'}}/>;
-  }
-  if(anno.type==='circle'){
-    return <div key={anno.id} style={{...base,width:`${anno.w}%`,height:`${anno.h}%`,border:`3px solid ${anno.color}`,borderRadius:'999px',boxSizing:'border-box',transformOrigin:'center center'}}/>;
-  }
-  if(anno.type==='arrow'){
-    return(
-      <div key={anno.id} style={{...base,width:`${anno.w}%`,height:`${anno.h}%`,transformOrigin:'left center'}}>
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{width:'100%',height:'100%',display:'block',overflow:'visible'}}>
-          <line x1="0" y1="50" x2="78" y2="50" stroke={anno.color} strokeWidth="10" strokeLinecap="round"/>
-          <polygon points="78,24 100,50 78,76" fill={anno.color}/>
-        </svg>
-      </div>
-    );
-  }
-  if(anno.type==='text'){
-    return <div key={anno.id} style={{...base,color:anno.color,fontWeight:700,fontSize:'16px',lineHeight:1.2,background:'rgba(255,255,255,0.82)',padding:'2px 6px',borderRadius:4,width:`${anno.w}%`,minHeight:`${anno.h}%`,wordBreak:'break-word',transformOrigin:'left top',boxSizing:'border-box'}}>{anno.text||'Text'}</div>;
-  }
-  return null;
-}
-
-function ImageSlot({id,storageId,editMode}){
-  const[items,setItems]=useState(()=>getHelpGallery(storageId,id));
-  const[selectedId,setSelectedId]=useState(null);
-  const slotIdRef=useRef(`help_slot_${storageId}_${id}_${Math.random().toString(36).slice(2,8)}`);
-  const ref=useRef(null);
-  const selected=items.find(item=>item.id===selectedId)||items[0]||null;
-  const activateSlot=useCallback(()=>{
-    activeHelpSlotId=slotIdRef.current;
-  },[]);
-  useEffect(()=>{
-    const nextItems=getHelpGallery(storageId,id);
-    setItems(nextItems);
-    setSelectedId(nextItems[0]?.id||null);
-    setSelectedAnnoId(null);
-  },[storageId,id]);
-  const sync=next=>{
-    setItems(next);
-    saveHelpGallery(storageId,next);
-    if(!next.find(item=>item.id===selectedId)) setSelectedId(next[0]?.id||null);
-  };
-  const save=e=>{
-    if(!editMode) return;
-    const files=[...(e.target.files||[])];
-    if(!files.length)return;
-    files.forEach(file=>{
-      const reader=new FileReader();
-      reader.onload=evt=>{
-        const d=evt.target.result;
-        const next=[...getHelpGallery(storageId,id),{id:`img_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,src:d,annotations:[]}];
-        sync(next);
-        if(!selectedId && next[0]) setSelectedId(next[next.length-1].id);
-      };
-      reader.readAsDataURL(file);
-    });
-    e.target.value='';
-  };
-  const removeImage=imgId=>{
-    sync(items.filter(item=>item.id!==imgId));
-  };
-  const replaceImage=(imgId,file)=>{
-    if(!editMode) return;
-    if(!file)return;
-    const reader=new FileReader();
-    reader.onload=evt=>{
-      sync(items.map(item=>item.id===imgId?{...item,src:evt.target.result}:item));
-    };
-    reader.readAsDataURL(file);
-  };
-  const[selectedAnnoId,setSelectedAnnoId]=useState(null);
-  const selectedAnnotation=selected?.annotations?.find(anno=>anno.id===selectedAnnoId)||null;
-  useEffect(()=>{
-    if(selected && selectedAnnoId && !selected.annotations.find(anno=>anno.id===selectedAnnoId)){
-      setSelectedAnnoId(null);
-    }
-  },[selected,selectedAnnoId]);
-  // Keep the latest annotation state in a ref so the keydown listener doesn't
-  // get re-registered on every items/annotation change (previous version
-  // rebound on every keystroke).
-  const annoStateRef=useRef({selected,selectedAnnotation});
-  annoStateRef.current={selected,selectedAnnotation};
-  useEffect(()=>{
-    if(!editMode) return;
-    const onKeyDown=e=>{
-      if(activeHelpSlotId!==slotIdRef.current) return;
-      const {selected:s,selectedAnnotation:a}=annoStateRef.current;
-      if(!s || !a) return;
-      const target=e.target;
-      const tag=target?.tagName?.toLowerCase();
-      if(tag==='input' || tag==='textarea' || tag==='select' || target?.isContentEditable) return;
-      const step=e.shiftKey?3:1;
-      const rotateStep=e.shiftKey?15:5;
-      const clamp=(n,min,max)=>Math.min(max,Math.max(min,n));
-      const key=e.key.toLowerCase();
-      if(!['w','a','s','d','q','e','x','c','y','v'].includes(key)) return;
-      e.preventDefault();
-      if(key==='w') patchAnnotation(a.id,{y:clamp(Number(a.y||0)-step,0,95)});
-      if(key==='s') patchAnnotation(a.id,{y:clamp(Number(a.y||0)+step,0,95)});
-      if(key==='a') patchAnnotation(a.id,{x:clamp(Number(a.x||0)-step,0,95)});
-      if(key==='d') patchAnnotation(a.id,{x:clamp(Number(a.x||0)+step,0,95)});
-      if(key==='q') patchAnnotation(a.id,{rotation:Number(a.rotation||0)-rotateStep});
-      if(key==='e') patchAnnotation(a.id,{rotation:Number(a.rotation||0)+rotateStep});
-      if(key==='x') patchAnnotation(a.id,{w:clamp(Number(a.w||0)+step,4,95)});
-      if(key==='y') patchAnnotation(a.id,{w:clamp(Number(a.w||0)-step,4,95)});
-      if(key==='c') patchAnnotation(a.id,{h:clamp(Number(a.h||0)+step,4,95)});
-      if(key==='v') patchAnnotation(a.id,{h:clamp(Number(a.h||0)-step,4,95)});
-    };
-    window.addEventListener('keydown',onKeyDown);
-    return()=>window.removeEventListener('keydown',onKeyDown);
-  },[editMode]);
-  useEffect(()=>()=>{ if(activeHelpSlotId===slotIdRef.current) activeHelpSlotId=null; },[]);
-  const addAnnotation=type=>{
-    if(!editMode || !selected)return;
-    activateSlot();
-    const newAnno=mkHelpAnno(type);
-    const next=items.map(item=>item.id!==selected.id?item:{...item,annotations:[...item.annotations,newAnno]});
-    sync(next);
-    setSelectedAnnoId(newAnno.id);
-  };
-  const patchAnnotation=(annoId,patch)=>{
-    if(!editMode || !selected)return;
-    activateSlot();
-    sync(items.map(item=>item.id!==selected.id?item:{...item,annotations:item.annotations.map(anno=>anno.id===annoId?{...anno,...patch}:anno)}));
-  };
-  const removeAnnotation=annoId=>{
-    if(!editMode || !selected)return;
-    activateSlot();
-    const next=items.map(item=>item.id!==selected.id?item:{...item,annotations:item.annotations.filter(anno=>anno.id!==annoId)});
-    sync(next);
-    setSelectedAnnoId(null);
-  };
-  return(
-    <div style={{marginTop:10,marginBottom:4}} onMouseDown={activateSlot}>
-      <input ref={ref} type="file" accept="image/*" multiple style={{display:'none'}} onChange={save}/>
-      {!items.length?(
-        editMode?(
-          <div onClick={()=>ref.current?.click()} style={{border:'2px dashed var(--c-bo)',borderRadius:6,padding:'12px 16px',textAlign:'center',cursor:'pointer',color:'var(--c-mu)',fontSize:'12px',background:'var(--c-wW)',transition:'border-color 0.15s'}}
-            onMouseEnter={e=>e.currentTarget.style.borderColor='var(--c-t)'}
-            onMouseLeave={e=>e.currentTarget.style.borderColor='var(--c-bo)'}
-          >📷 Bilder hinzufügen — mehrere Screenshots pro Schritt möglich</div>
-        ):null
-      ):(
-        <div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
-            <div style={{fontSize:'11px',color:'var(--c-mu)'}}>{items.length} Bild{items.length===1?'':'er'} · horizontal scrollbar</div>
-            {editMode&&<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-              <button onClick={()=>ref.current?.click()} style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>+ Bilder</button>
-              {selected&&(
-                <>
-                  <button onClick={()=>addAnnotation('box')} style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>□ Box</button>
-                  <button onClick={()=>addAnnotation('circle')} style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>◯ Kreis</button>
-                  <button onClick={()=>addAnnotation('arrow')} style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>→ Pfeil</button>
-                  <button onClick={()=>addAnnotation('text')} style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>T Text</button>
-                </>
-              )}
-            </div>}
-          </div>
-          <div style={{display:'flex',gap:12,overflowX:'auto',paddingBottom:6,scrollbarWidth:'thin'}}>
-            {items.map(item=>(
-              <div key={item.id} style={{minWidth:300,maxWidth:300,flex:'0 0 auto'}}>
-                <div onClick={()=>{ if(editMode){ activateSlot(); setSelectedId(item.id); setSelectedAnnoId(null); } }} style={{position:'relative',border:editMode&&selected?.id===item.id?'2px solid var(--c-t)':'1px solid var(--c-bo)',borderRadius:8,overflow:'hidden',background:'var(--c-wh)',cursor:editMode?'pointer':'default'}}>
-                  <div style={{position:'relative'}}>
-                    <img src={item.src} alt="Screenshot" style={{width:'100%',display:'block'}}/>
-                    <div style={{position:'absolute',inset:0}}>
-                      {(item.annotations||[]).map(renderHelpAnnotation)}
-                    </div>
-                  </div>
-                  {editMode&&<div style={{position:'absolute',top:6,right:6,display:'flex',gap:4}}>
-                    <label style={{background:'rgba(0,0,0,0.55)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',padding:'3px 8px',fontSize:'11px'}}>
-                      ✎
-                      <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{replaceImage(item.id,e.target.files?.[0]);e.target.value='';}}/>
-                    </label>
-                    <button onClick={(e)=>{e.stopPropagation();removeImage(item.id);}} style={{background:'rgba(180,0,0,0.7)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',padding:'3px 8px',fontSize:'11px'}}>✕</button>
-                  </div>}
-                </div>
-              </div>
-            ))}
-          </div>
-          {editMode&&selected&&(
-            <div style={{marginTop:10,border:'1px solid var(--c-bo)',borderRadius:8,padding:12,background:'var(--c-wW)'}}>
-              <div style={{fontSize:'11px',letterSpacing:'1px',textTransform:'uppercase',color:'var(--c-mu)',fontWeight:600,marginBottom:8}}>Bild schnell bearbeiten</div>
-              <div style={{fontSize:'12px',color:'var(--c-mu)',marginBottom:10}}>Tastatur: <strong>W A S D</strong> bewegt das ausgewählte Element, <strong>Q</strong> dreht nach links, <strong>E</strong> dreht nach rechts, <strong>X</strong> vergrössert die Breite, <strong>Y</strong> verkleinert die Breite, <strong>C</strong> vergrössert die Höhe, <strong>V</strong> verkleinert die Höhe. Mit <strong>Shift</strong> geht es schneller.</div>
-              {!selected.annotations.length?<div style={{fontSize:'12px',color:'var(--c-mu)'}}>Wähle oben ein Werkzeug, um Boxen, Kreise, Pfeile oder Text hinzuzufügen.</div>:(
-                <>
-                  <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
-                    {selected.annotations.map(anno=>(
-                      <button key={anno.id} onClick={()=>{ activateSlot(); setSelectedAnnoId(anno.id); }} style={{padding:'4px 8px',border:'1px solid var(--c-bo)',borderRadius:4,cursor:'pointer',background:selectedAnnotation?.id===anno.id?'var(--c-tP)':'var(--c-wh)',fontSize:'11px'}}>
-                        {anno.type}
-                      </button>
-                    ))}
-                  </div>
-                  {selectedAnnotation&&(
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:8}}>
-                      <label style={{fontSize:'11px',color:'var(--c-mu)'}}>Farbe
-                        <select style={{...inp,fontSize:'12px',padding:'5px 7px'}} value={selectedAnnotation.color} onChange={e=>patchAnnotation(selectedAnnotation.id,{color:e.target.value})}>
-                          {HELP_COLORS.map(color=><option key={color} value={color}>{color}</option>)}
-                        </select>
-                      </label>
-                      <label style={{fontSize:'11px',color:'var(--c-mu)'}}>X %
-                        <input type="number" min="0" max="90" style={{...inp,fontSize:'12px',padding:'5px 7px'}} value={selectedAnnotation.x} onChange={e=>patchAnnotation(selectedAnnotation.id,{x:Number(e.target.value)})}/>
-                      </label>
-                      <label style={{fontSize:'11px',color:'var(--c-mu)'}}>Y %
-                        <input type="number" min="0" max="90" style={{...inp,fontSize:'12px',padding:'5px 7px'}} value={selectedAnnotation.y} onChange={e=>patchAnnotation(selectedAnnotation.id,{y:Number(e.target.value)})}/>
-                      </label>
-                      <label style={{fontSize:'11px',color:'var(--c-mu)'}}>Breite %
-                        <input type="number" min="4" max="90" style={{...inp,fontSize:'12px',padding:'5px 7px'}} value={selectedAnnotation.w} onChange={e=>patchAnnotation(selectedAnnotation.id,{w:Number(e.target.value)})}/>
-                      </label>
-                      <label style={{fontSize:'11px',color:'var(--c-mu)'}}>Rotation
-                        <input type="number" style={{...inp,fontSize:'12px',padding:'5px 7px'}} value={selectedAnnotation.rotation||0} onChange={e=>patchAnnotation(selectedAnnotation.id,{rotation:Number(e.target.value)})}/>
-                      </label>
-                      {selectedAnnotation.type!=='text'&&(
-                        <label style={{fontSize:'11px',color:'var(--c-mu)'}}>Höhe %
-                          <input type="number" min="4" max="90" style={{...inp,fontSize:'12px',padding:'5px 7px'}} value={selectedAnnotation.h} onChange={e=>patchAnnotation(selectedAnnotation.id,{h:Number(e.target.value)})}/>
-                        </label>
-                      )}
-                      {selectedAnnotation.type==='text'&&(
-                        <label style={{fontSize:'11px',color:'var(--c-mu)',gridColumn:'span 3'}}>Text
-                          <input style={{...inp,fontSize:'12px',padding:'5px 7px'}} value={selectedAnnotation.text||''} onChange={e=>patchAnnotation(selectedAnnotation.id,{text:e.target.value})}/>
-                        </label>
-                      )}
-                      <div style={{display:'flex',alignItems:'end'}}>
-                        <button onClick={()=>removeAnnotation(selectedAnnotation.id)} style={{background:'var(--c-re)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',padding:'7px 10px',fontSize:'11px',width:'100%'}}>Annotation löschen</button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── AIM Logo ────────────────────────────────────────────────────────────────
 function AimLogo({size=32}){
   const h=size,w=size;
@@ -1830,8 +1596,7 @@ function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMo
     {k:'programs',icon:'◫',label:'Weiterbildungsgänge',badge:pCount},
     {k:'exam',icon:'✎',label:'Prüfung erstellen'},
     {k:'export',icon:'↓',label:'Export & Download',badge:examCount||null},
-    {k:'help',icon:'?',label:'Hilfe & Anleitung'},
-    {k:'about',icon:'★',label:'Über die App'},
+    {k:'anleitung',icon:'📖',label:'Anleitung'},
     {k:'settings',icon:'⚙',label:'Einstellungen'},
   ];
   return(
@@ -1956,27 +1721,7 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
   };
   const courses=[...new Set(questions.map(q=>q.course))];
   const fmtCounts=FORMATS.map(f=>({f,n:questions.filter(q=>q.format===f).length}));
-  // Snapshot the help-manual content + all gallery (image) entries from
-  // localStorage so the JSON backup is genuinely complete.
-  const snapshotHelpAndGalleries=()=>{
-    let help=null;
-    const galleries={};
-    try{
-      const raw=window.localStorage.getItem('aim_help_v2');
-      if(raw) help=JSON.parse(raw);
-    }catch{ help=null; }
-    try{
-      for(let i=0;i<window.localStorage.length;i++){
-        const key=window.localStorage.key(i);
-        if(key && key.startsWith('aim_gallery_')){
-          try{ galleries[key]=JSON.parse(window.localStorage.getItem(key)||'null'); }catch{}
-        }
-      }
-    }catch{}
-    return {help, galleries};
-  };
   const exportBackup=()=>{
-    const {help,galleries}=snapshotHelpAndGalleries();
     const data=JSON.stringify({
       version:4,
       exportedAt:new Date().toISOString(),
@@ -1985,8 +1730,6 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
       semesterView:buildSemesterOverviewEntries(programs),
       savedExams,
       currentExam:exam?{exam,name:examName||''}:null,
-      help,
-      galleries,
       courseTags,
     },null,2);
     dlFile(data,`AIM_Backup_${new Date().toISOString().slice(0,10)}.json`,'application/json');
@@ -2002,20 +1745,6 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
     setSavedExams(Array.isArray(data.savedExams)?data.savedExams:[]);
     setExam(data.currentExam?.exam||null);
     setExamName(data.currentExam?.name||'');
-    // Restore help + galleries (v3+ backups). Validate keys defensively —
-    // gallery keys are written back into localStorage as-is.
-    if(data.help && typeof data.help==='object'){
-      try{ window.localStorage.setItem('aim_help_v2',JSON.stringify(data.help)); }catch{}
-    }
-    if(data.galleries && typeof data.galleries==='object'){
-      try{
-        Object.entries(data.galleries).forEach(([key,value])=>{
-          if(typeof key==='string' && /^aim_gallery_[A-Za-z0-9_-]+$/.test(key)){
-            try{ window.localStorage.setItem(key,JSON.stringify(value)); }catch{}
-          }
-        });
-      }catch{}
-    }
     // v4+ backups carry explicit courseTags. Older (v3 or v2) backups don't
     // — when restoring those, run the migration to compute initial tags
     // from the restored programs matrix.
@@ -3272,10 +3001,14 @@ export function ExportView({exam,programName,setView,showToast,showConfirm,onSav
           <Btn ch="💾 Speichern & neu" onClick={openSaveDialog} v="primary"/>
           <Btn ch={copied?'✓ Kopiert!':'Kopieren'} onClick={copy} v={copied?'success':'ghost'}/>
           <Btn ch="↓ TXT" onClick={()=>dlFile(txt,`AIM_Pruefung_${(programName||'Export').replace(/\s+/g,'_')}.txt`)} v="secondary"/>
-          <Btn ch="↓ Als PDF speichern" onClick={()=>{
-            const ok=printAsPdf(exam,`AIM Prüfung – ${programName||'Export'}`);
-            if(!ok) showToast('PDF-Fenster konnte nicht geöffnet werden. Bitte App neu starten und erneut versuchen.','error');
-          }} v="accent" title="Öffnet den Druck-Dialog — dort &quot;Als PDF sichern&quot; wählen"/>
+          <Btn ch="↓ Word (.docx)" onClick={()=>{
+            try{
+              dlFile(buildDocx(exam),`AIM_Pruefung_${(programName||'Export').replace(/\s+/g,'_')}.docx`,'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            }catch(e){
+              console.error('DOCX export error:',e);
+              showToast('Word-Datei konnte nicht erstellt werden. Bitte erneut versuchen.','error');
+            }
+          }} v="accent" title="Word-Datei für den Testportal-Import — korrekte Antworten sind fett markiert"/>
           <Btn ch="✕ Prüfung löschen" onClick={onClear} v="ghost"/>
         </div>
       }/>
@@ -3384,914 +3117,7 @@ export function SettingsPage({settings,setSettings,darkMode,onToggleDark}){
 }
 
 
-// ─── Help Page — Data & Renderer ─────────────────────────────────────────────
-const HELP_KEY='aim_help_v2';
 const APP_INIT_KEY='aim_app_initialized_v1';
-let helpBlockSeed=1;
-const nextHelpBlockId=()=>`hb_${helpBlockSeed++}`;
-const mk=(t,o)=>({id:o?.id||nextHelpBlockId(),t,...o});
-const BUILTIN_MANUAL_KEYS=['testportal','aimmanager'];
-const HELP_DEFAULTS={
-  testportal:{
-    navLabel:'Testportal Handbuch',
-    sections:[
-      {k:'overview',label:'1. Zweck & Ablauf'},{k:'prepare',label:'2. Vorbereitung'},
-      {k:'questions',label:'3. Fragen & Formate'},{k:'settings_tp',label:'4. Test-Einstellungen'},
-      {k:'classes',label:'5. Durchführung'},{k:'results',label:'6. Resultate & Papier'},
-      {k:'app',label:'7. AIM Manager'},{k:'faq',label:'8. FAQ'},
-    ],
-    content:{
-      overview:{title:'Zweck & Gesamtprozess',sub:'Für Personen, die Prüfungen anlegen und für mehrere Klassen durchführen',blocks:[
-        mk('info',{icon:'🎯',title:'Wofür diese Seite da ist',body:'Diese Anleitung fasst das Testportal-Tutorial in einer klaren Arbeitslogik für AIM zusammen. Sie ist nicht als technisches Handbuch gedacht, sondern als operative Seite für alle, die Prüfungen vorbereiten, freigeben, überwachen und danach die Resultate sichern müssen.',color:'default'}),
-        mk('cards',{items:[{h:'Vor dem Test',b:'Prüfung im AIM Manager zusammenstellen, Weiterbildungsgang prüfen, Export vorbereiten.'},{h:'Im Testportal',b:'Test anlegen, Fragen aufbauen oder importieren, Sicherheit und Zeiten korrekt setzen.'},{h:'Nach dem Test',b:'Resultate sichern, PDFs herunterladen, Papier-Version bei Bedarf erzeugen, Test bereinigen.'}]}),
-        mk('info',{icon:'⚡',title:'Empfohlener 6-Schritte-Ablauf',body:'1. Im AIM Manager den richtigen Weiterbildungsgang wählen.\n2. Die korrekten Module und Fragen für diese Prüfung zusammenstellen.\n3. Im Testportal einen neuen Test mit sauberer Benennung anlegen.\n4. Fragen prüfen und die Portal-Einstellungen konservativ setzen.\n5. Link erst nach letzter Kontrolle an die richtige Klasse verschicken.\n6. Nach Abschluss Resultate sofort sichern und den Test nicht unnötig offen lassen.',color:'green'}),
-      ]},
-      prepare:{title:'Vorbereitung',sub:'Vom Login bis zum sauberen Testgerüst',blocks:[
-        mk('step',{n:1,title:'Konto und Zugang',body:'Das Tutorial beschreibt den Einstieg über www.testportal.net. Neue Nutzer gehen über Sign Up und wählen Education; bestehende Nutzer über Sign In. Nach einer Neuregistrierung muss die Aktivierungs-E-Mail bestätigt werden.',img:'prepare-1'}),
-        mk('step',{n:2,title:'Neuen Test anlegen',body:'Nach dem Login auf New Test klicken. In den General Settings werden Testname, optional Kategorie und Beschreibung erfasst. Für viele Klassen lohnt sich ein festes Schema, damit Tests später bei Resultaten und Rückfragen sofort zuordenbar sind.',img:'prepare-2'}),
-        mk('code',{body:'AIM · WBS 56 · Semester 3 · HS 2026 · Klasse A'}),
-        mk('step',{n:3,title:'Vor dem Befüllen kurz prüfen',body:'Noch bevor Fragen eingetragen werden, muss klar sein: Welcher Weiterbildungsgang? Welche Module? Welcher Termin? Welche Klasse? Diese Vorarbeit passiert bei AIM idealerweise im eigenen Manager und nicht erst im Testportal.',img:'prepare-3'}),
-      ]},
-      questions:{title:'Fragen & Formate',sub:'Die Fragetypen aus dem Tutorial und ihre praktische Bedeutung',blocks:[
-        mk('cards',{items:[{h:'Single Choice',b:'Eine richtige Antwort. Für Standardprüfungen meist der schnellste und stabilste Fragetyp.'},{h:'Multiple Choice',b:'Mehrere richtige Antworten. Scoring und Markierungen besonders sorgfältig kontrollieren.'},{h:'Descriptive',b:'Offene Antwort. Muss manuell korrigiert werden; nur einsetzen, wenn der Zusatzaufwand bewusst eingeplant ist.'},{h:'True / False',b:'Einfach, schnell auswertbar und gut für Wissensabfragen.'},{h:'Short Answer',b:'Kurze Eingabe. Im Tutorial wird betont, dass eine klare Bemerkung zur Schreibweise nötig ist.'}]}),
-        mk('step',{n:1,title:'Question Manager nutzen',body:'Fragen werden im Question Manager hinzugefügt. Laut Tutorial lassen sich Fragen dort auch später wieder bearbeiten, löschen und in der Reihenfolge verschieben.',img:'questions-1'}),
-        mk('step',{n:2,title:'Punkte und korrekte Antworten eindeutig setzen',body:'Bei automatisch auswertbaren Formaten müssen die korrekten Antworten klar markiert und die Punkte pro Frage sauber gesetzt sein. Bei Multiple Choice sollte zusätzlich geprüft werden, ob Punktabzüge für falsche Antworten sinnvoll gesetzt sind.',img:'questions-2'}),
-        mk('step',{n:3,title:'Medien und Spezialelemente gezielt einsetzen',body:'Das Tutorial zeigt, dass Bilder, Videos, Links, Formeln und Symbole eingefügt werden können. Für grosse Prüfungen mit vielen Klassen empfiehlt sich jedoch Zurückhaltung.',img:'questions-3'}),
-        mk('info',{icon:'💡',title:'Praxisregel',body:'Wenn viele Klassen geprüft werden, möglichst auf gut automatisch korrigierbare Formate setzen. Offene Formate nur dort einsetzen, wo der fachliche Mehrwert den zusätzlichen Korrekturaufwand klar rechtfertigt.',color:'warn'}),
-      ]},
-      settings_tp:{title:'Wichtige Test-Einstellungen',sub:'Die Stellen, an denen laut Tutorial besonders sorgfältig gearbeitet werden sollte',blocks:[
-        mk('step',{n:1,title:'Test Sets aktiv nutzen',body:'Das Tutorial empfiehlt, mehrere Test Sets zu erzeugen, damit Varianten nicht identisch sind. Select All soll aktiv bleiben, damit alle erstellten Sets auch wirklich genutzt werden.',img:'settings-1'}),
-        mk('step',{n:2,title:'Access to Test defensiv einstellen',body:'Im Tutorial werden diese Einstellungen ausdrücklich empfohlen:\n- Anti-Cheat- bzw. Browser-Skipping-Warnungen aktiv lassen.\n- Number of access times = 2, damit Lernende bei technischem Unterbruch nochmals einsteigen können.\n- Attempts = 1.',img:'settings-2'}),
-        mk('step',{n:3,title:'Grading and Summary',body:'Laut Tutorial sollte mit Punkten und möglichst geraden Zahlen gearbeitet werden, da keine Dezimalbewertung vorgesehen ist. Korrekte Antworten sollen während eines laufenden Tests nicht sichtbar sein.',img:'settings-3'}),
-        mk('step',{n:4,title:'Timer Settings',body:'Die Dauer wird für den gesamten Test gesetzt. Danach werden Aktivierungszeit und Endzeit terminiert. Das Tutorial empfiehlt ausserdem, die Rücksprung-Option ausgeschaltet zu lassen, wenn ein No-Backtrack-Ablauf gewünscht ist.',img:'settings-4'}),
-        mk('note',{body:'Letzte Kontrolle vor dem Versand: Testname prüfen. Klasse prüfen. Aktivierungszeit prüfen. Endzeit prüfen. Anzahl Zugriffe prüfen. Versuchszahl prüfen. Anzeige korrekter Antworten prüfen.'}),
-      ]},
-      classes:{title:'Durchführung für viele Klassen',sub:'Wie der Prozess auch bei mehreren Gruppen sauber bleibt',blocks:[
-        mk('step',{n:1,title:'Saubere Trennung pro Klasse oder Kohorte',body:'Jede Durchführung muss klar benannt und eindeutig zuordenbar sein. Ob mit getrennten Tests oder einem sehr präzisen Benennungsschema gearbeitet wird: Wichtig ist, dass bei Links, PDFs und Resultaten nie unklar ist, welche Klasse betroffen ist.',img:'classes-1'}),
-        mk('step',{n:2,title:'Link erst nach der Schlusskontrolle verschicken',body:'Im Tutorial wird das Teilen über Microsoft Teams gezeigt: Link kopieren, in Teams in die richtige Unterhaltung einfügen und senden. Der Link öffnet sich erst ab der Aktivierungszeit.',img:'classes-2'}),
-        mk('step',{n:3,title:'Während der Prüfung mit Warnungen rechnen',body:'Testportal erkennt laut Tutorial Browser-Wechsel oder das Öffnen weiterer Fenster. Lernende werden gewarnt und können bei zu vielen Warnungen blockiert werden.',img:'classes-3'}),
-        mk('step',{n:4,title:'Kapazitätsgrenze mitdenken',body:'Im Tutorial steht der wichtige Hinweis, dass in der beschriebenen Paketstufe nur 100 Studierende gleichzeitig geprüft werden konnten. Für grössere Durchführungen heisst das: Klassen staffeln, Resultate direkt sichern.',img:'classes-4'}),
-        mk('info',{icon:'✅',title:'Empfohlene Arbeitsregel',body:'Immer in derselben Reihenfolge arbeiten: Prüfung vorbereiten, Zeiten kontrollieren, Link verschicken, Durchführung begleiten, Resultate herunterladen, Test bereinigen.',color:'green'}),
-      ]},
-      results:{title:'Resultate & Papier-Version',sub:'Was nach dem Test heruntergeladen und dokumentiert werden sollte',blocks:[
-        mk('step',{n:1,title:'Resultate herunterladen',body:'Nach Prüfungsende im Testportal die Resultate des abgeschlossenen Tests öffnen. Laut Tutorial können alle Lernenden markiert und die Resultate gesammelt heruntergeladen werden.',img:'results-1'}),
-        mk('step',{n:2,title:'Resultatstabelle bewusst zusammenstellen',body:'Das Tutorial zeigt, dass beim Download gewählt werden kann, welche Angaben in der Tabelle erscheinen. Für den Alltag mit vielen Klassen hilft eine reduzierte, klare Auswahl der wirklich nötigen Spalten.',img:'results-2'}),
-        mk('step',{n:3,title:'Papier-Version bei Hybrid-Situationen',body:'Über Print version kann eine Papierfassung erstellt werden. Laut Tutorial sollen dabei alle Dokumente und alle Sets markiert werden. Danach stehen Fragebogen, Antwortbogen und Lösungsschlüssel als PDF zur Verfügung.',img:'results-3'}),
-        mk('step',{n:4,title:'Nachbereitung',body:'Resultate zuerst vollständig sichern und nur dann aufräumen. Im Tutorial wird ausdrücklich empfohlen, Tests nach erfassten Resultaten wieder zu löschen, damit die Übersicht erhalten bleibt.',img:'results-4'}),
-      ]},
-      app:{title:'AIM Manager im Gesamtprozess',sub:'Was bei uns vorbereitet wird, bevor Testportal beginnt',blocks:[
-        mk('step',{n:1,title:'Weiterbildungsgang auswählen',body:'In Prüfung erstellen zuerst den richtigen Weiterbildungsgang in der Semesteransicht markieren. Die Zeile wird hervorgehoben und alle Module dieser Kohorte sind zuerst ausgewählt.',img:'app-1'}),
-        mk('step',{n:2,title:'Module prüfen',body:'Danach direkt in der Semesteransicht entscheiden, welche Module in diese Prüfung gehören. So entsteht der Fragenpool exakt für die ausgewählte Kohorte.',img:'app-2'}),
-        mk('step',{n:3,title:'Export als Grundlage nutzen',body:'Nach der Kontrolle wird die Prüfung exportiert. Diese exportierte Fassung ist die Grundlage für die weitere Arbeit im Testportal.',img:'app-3'}),
-        mk('info',{icon:'🧭',title:'Rollenverteilung',body:'AIM beantwortet die Frage: Welche Inhalte gehören in die Prüfung?\nTestportal beantwortet die Frage: Wie wird die Prüfung durchgeführt, terminiert und ausgewertet?',color:'default'}),
-      ]},
-      faq:{title:'FAQ',sub:'Kurze Antworten auf die häufigsten Praxisfragen',blocks:[
-        mk('info',{icon:'❓',title:'Soll ich zuerst im AIM Manager oder zuerst im Testportal arbeiten?',body:'Zuerst im AIM Manager. Dort wird die Prüfung inhaltlich korrekt pro Weiterbildungsgang zusammengestellt. Danach folgt die Durchführung im Testportal.',color:'default'}),
-        mk('info',{icon:'❓',title:'Welche Einstellungen sind am fehleranfälligsten?',body:'Aktivierungszeit, Endzeit, Anzahl Zugriffe, Versuchszahl und die Sichtbarkeit korrekter Antworten.',color:'default'}),
-        mk('info',{icon:'❓',title:'Wie gehe ich mit mehreren Klassen am selben Tag um?',body:'Mit klarer Benennung, sauber getrennten Links und einer festen Routine: prüfen, terminieren, verteilen, durchführen, Resultate sichern.',color:'default'}),
-        mk('info',{icon:'❓',title:'Wann sollte ich offene Fragetypen vermeiden?',body:'Sobald viele Klassen oder enge Korrekturfristen im Spiel sind. Offene Fragen erhöhen den manuellen Aufwand deutlich.',color:'default'}),
-        mk('info',{icon:'❓',title:'Wofür sind Test Sets besonders wichtig?',body:'Sie reduzieren identische Prüfungsvarianten und erschweren das Weitergeben von Antworten.',color:'default'}),
-        mk('info',{icon:'❓',title:'Was ist nach dem Test der erste Schritt?',body:'Resultate und PDFs sichern. Erst danach aufräumen oder löschen.',color:'default'}),
-      ]},
-    },
-  },
-  aimmanager:{
-    navLabel:'AIM Prüfungs-Manager Handbuch',
-    sections:[
-      {k:'overview',label:'1. Übersicht'},{k:'dashboard',label:'2. Dashboard'},
-      {k:'db',label:'3. Fragen Datenbank'},{k:'programs',label:'4. Weiterbildungsgänge'},
-      {k:'exam',label:'5. Prüfung erstellen'},{k:'export',label:'6. Export & Download'},
-      {k:'backup',label:'7. Backup & Daten'},{k:'settings_aim',label:'8. Einstellungen'},
-    ],
-    content:{
-      overview:{title:'Übersicht & Konzept',sub:'Der AIM Prüfungs-Manager im Überblick',blocks:[
-        mk('info',{icon:'🎯',title:'Was ist der AIM Prüfungs-Manager?',body:'Der AIM Prüfungs-Manager ist ein browserbasiertes Werkzeug für die strukturierte Erstellung von Online-Prüfungen. Anstatt Fragen manuell aus Excel-Tabellen zusammenzusuchen, verwaltet der Manager alle Fragen, Kurse und Weiterbildungsgänge zentral — und stellt für jede Kohorte automatisch die richtigen Fragen zusammen.',color:'default'}),
-        mk('cards',{items:[{h:'Fragen Datenbank',b:'Alle Prüfungsfragen zentral verwalten, suchen, filtern, importieren und exportieren.'},{h:'Weiterbildungsgänge',b:'Für jede Kohorte Semester und Module mit Kursen und Dozierenden verknüpfen.'},{h:'Prüfung erstellen',b:'Weiterbildungsgang auswählen, Module wählen, Fragenpool automatisch zusammenstellen.'},{h:'Export & Download',b:'Prüfung als PDF oder TXT herunterladen — im richtigen Format für das Testportal.'}]}),
-        mk('info',{icon:'⚡',title:'Empfohlener Ablauf',body:'1. Fragen in der Datenbank pflegen oder importieren.\n2. Weiterbildungsgänge mit Semestern und Modulen konfigurieren.\n3. Prüfung erstellen: Kohorte auswählen, Module prüfen.\n4. Export herunterladen und ins Testportal laden.',color:'green'}),
-        mk('info',{icon:'💾',title:'Datenspeicherung',body:'Alle Daten werden lokal im Browser (LocalStorage) gespeichert. Es gibt keine externe Datenbank. Erstelle regelmässig Backups über Dashboard → Backup erstellen, besonders vor dem Löschen des Browser-Caches.',color:'warn'}),
-      ]},
-      dashboard:{title:'Dashboard',sub:'Die Startseite des AIM Prüfungs-Managers',blocks:[
-        mk('info',{icon:'📊',title:'Statistik-Karten',body:'Das Dashboard zeigt auf einen Blick: Anzahl Fragen in der Datenbank, Anzahl Kurse, Anzahl Weiterbildungsgänge und Anzahl Prüfungsfragen im aktuellen Export. Grüne Einfärbung signalisiert, dass eine Prüfung bereit ist.',color:'default'}),
-        mk('step',{n:1,title:'Schnellzugriff nutzen',body:'Über die Schnellzugriff-Karten rechts gelangst du direkt zu den wichtigsten Funktionen: Neue Prüfung erstellen, Fragen verwalten oder den letzten Export herunterladen (falls vorhanden).',img:'aim-dashboard-1'}),
-        mk('step',{n:2,title:'Datensicherung',body:'Im Bereich Datensicherung kannst du:\n- 💾 Jetzt sichern: Speichert Daten explizit im Browser.\n- ↑ JSON laden: Stellt ein JSON-Backup wieder her.\n- ↓ JSON exportieren: Lädt das vollständige JSON-Backup herunter.\n- ↓ Excel exportieren: Lädt die bearbeitbare Excel-Datei mit Fragen, Weiterbildungsgängen und Semesteransicht herunter.\n- ↑ Excel importieren: Lädt diese Excel-Datei wieder in die App.',img:'aim-dashboard-2'}),
-        mk('step',{n:3,title:'Alle Daten löschen',body:'Mit ✕ Alle Daten löschen werden Fragen, Weiterbildungsgänge und die aktuell erstellte Prüfung vollständig aus der App entfernt. Diese Funktion ist dafür gedacht, danach direkt eine neue Datenversion per JSON oder Excel zu importieren.',img:'aim-dashboard-3'}),
-        mk('info',{icon:'⚠️',title:'Wichtig',body:'Daten werden automatisch gespeichert, wenn du Änderungen machst. «💾 Jetzt sichern» ist eine manuelle Bestätigung. Backups sind Dateien auf deinem Computer — bewahre sie sicher auf. Beim ersten Start ist Export & Download absichtlich leer, bis eine Prüfung erstellt wurde.',color:'warn'}),
-      ]},
-      db:{title:'Fragen Datenbank',sub:'Alle Prüfungsfragen verwalten',blocks:[
-        mk('info',{icon:'📋',title:'Übersicht',body:'Die Fragen Datenbank enthält alle verfügbaren Prüfungsfragen. Jede Frage gehört zu einem Kurs und hat ein Format (Single Choice, Multiple Choice, Richtig/Falsch, Ja/Nein), Antwortoptionen und eine Markierung der richtigen Antwort.',color:'default'}),
-        mk('step',{n:1,title:'Lesemodus und Bearbeitungsmodus',body:'Standardmässig ist die Datenbank im Lesemodus (🔒). Klicke auf ✏️ Bearbeiten um den Bearbeitungsmodus zu aktivieren. Im Lesemodus sind keine Änderungen möglich — das schützt vor versehentlichen Löschungen.',img:'aim-db-1'}),
-        mk('step',{n:2,title:'Frage hinzufügen',body:'Im Bearbeitungsmodus auf + Neue Frage klicken. Pflichtfelder sind: Kursname, Frage und mindestens eine korrekte Antwort. Optionale Felder: Dozent/in, Jahr, Standort, weitere Antwortoptionen.',img:'aim-db-2'}),
-        mk('step',{n:3,title:'Fragen suchen und filtern',body:'Nutze die Suchleiste (Frage, Kurs, Dozent) oder die Dropdowns (Kurs, Dozent/in, Format) um Fragen zu finden. Zusätzlich kannst du wählen, ob 15, 30, 50 oder alle Fragen gleichzeitig angezeigt werden. Mit ✕ Reset werden alle Filter zurückgesetzt.',img:'aim-db-3'}),
-        mk('step',{n:4,title:'Import aus JSON oder CSV',body:'Klicke auf ↑ Import um die Import-Vorlage zu sehen und eine Datei hochzuladen. Pflichtfelder in der Importdatei: course, question, answer. Die App prüft die Daten und zeigt eine Zusammenfassung.',img:'aim-db-4'}),
-        mk('step',{n:5,title:'Export',body:'Im Bearbeitungsmodus: ↓ Export lädt die aktuell gefilterten Fragen als JSON-Datei herunter. Ideal für Backups einzelner Kurse oder zum Teilen mit Kollegen.',img:'aim-db-5'}),
-        mk('note',{body:'Tipp: Die farbigen Trennlinien in der Tabelle zeigen Kursgrenzen — so erkennst du auf einen Blick, welche Fragen zum gleichen Kurs gehören.'}),
-      ]},
-      programs:{title:'Weiterbildungsgänge',sub:'Kohorten mit Semestern und Modulen verwalten',blocks:[
-        mk('info',{icon:'🗂️',title:'Konzept',body:'Ein Weiterbildungsgang (WBG) ist eine Kohorte mit 6 Semestern und je 4 Modulen. Jedes Modul verknüpft einen Kurs (aus der Fragen Datenbank) mit einem Dozenten/einer Dozentin und einem Jahr. So weiss die App genau, welche Fragen zu welcher Kohorte gehören.',color:'default'}),
-        mk('step',{n:1,title:'Weiterbildungsgang erstellen',body:'Klicke auf + Neuer WBG, gib den Namen (z.B. WBS 56 (2025)) und das Startjahr/-semester ein. Klicke auf Erstellen.',img:'aim-programs-1'}),
-        mk('step',{n:2,title:'Module konfigurieren',body:'Die Matrix zeigt alle Weiterbildungsgänge mit je 6 Semestern. Klicke auf 🔓 Bearbeiten um die Matrix zu entsperren. Trage für jedes Modul Jahr, Dozent/in und Kursname ein. Beim Kursname wird automatisch eine Auswahl aller bekannten Kurse angezeigt — inklusive der zugeordneten Dozierenden.',img:'aim-programs-2'}),
-        mk('step',{n:3,title:'Sperren und Zoomen',body:'🔒 Sperren schützt die Matrix vor versehentlichen Änderungen. Mit den Zoom-Stufen (100% bis 55%) lässt sich die Matrix verkleinern, um mehr auf einmal zu sehen.',img:'aim-programs-3'}),
-        mk('note',{body:'Kursname und Dozent in der Matrix müssen exakt mit den Einträgen in der Fragen Datenbank übereinstimmen, damit die richtigen Fragen zugeordnet werden. Gross-/Kleinschreibung beachten.'}),
-      ]},
-      exam:{title:'Prüfung erstellen',sub:'Fragenpool für eine Kohorte zusammenstellen',blocks:[
-        mk('step',{n:1,title:'Weiterbildungsgang auswählen',body:'Klicke in der Matrix auf den Namen des Weiterbildungsgangs. Die Zeile wird hervorgehoben und alle Module mit zugeordneten Kursen werden automatisch ausgewählt.',img:'aim-exam-1'}),
-        mk('step',{n:2,title:'Module und Fragen prüfen',body:'In der Zusammenfassung oben siehst du sofort: Anzahl gewählter Module und Gesamtzahl der Fragen. Standard ist 40 Fragen — bei Abweichung erscheint ein Hinweis. Einzelne Module können per Checkbox an- oder abgewählt werden.',img:'aim-exam-2'}),
-        mk('step',{n:3,title:'Prüfung erstellen',body:'Klicke auf Prüfung erstellen →. Die App wechselt automatisch in die Export-Ansicht. Standardmässig startet diese Ansicht im kleinen Zoom von 55%, damit auch grosse Semesteransichten schneller überblickt werden können.',img:'aim-exam-3'}),
-        mk('step',{n:4,title:'Zurücksetzen',body:'Mit ✕ Zurücksetzen wird die Auswahl gelöscht und du kannst einen anderen Weiterbildungsgang wählen. Dies löscht keine Daten aus der Datenbank.',img:'aim-exam-4'}),
-        mk('info',{icon:'💡',title:'Fragepool-Logik',body:'Fragen werden einem Modul zugeordnet, wenn Kursname übereinstimmt. Wenn Dozent/in im Modul eingetragen ist, werden nur Fragen dieses Dozenten/dieser Dozentin einbezogen. Bei Jahreszahl gilt dasselbe Prinzip.',color:'default'}),
-      ]},
-      export:{title:'Export & Download',sub:'Prüfung herunterladen und für das Testportal vorbereiten',blocks:[
-        mk('info',{icon:'📭',title:'Beim ersten Start leer',body:'Beim ersten Öffnen der App ist Export & Download bewusst leer. Erst wenn im Bereich Prüfung erstellen eine Prüfung gebaut wurde, erscheinen Vorschau und Download-Funktionen.',color:'default'}),
-        mk('info',{icon:'👁',title:'Vorschau',body:'Die Vorschau zeigt die Prüfung im Testportal-Format: Kursname kursiv-unterstrichen, Frage fett, Antworten mit a/b/c, korrekte Antworten grün markiert und mit ✓.',color:'default'}),
-        mk('step',{n:1,title:'Kopieren',body:'Kopiert den Volltext der Prüfung in die Zwischenablage — im Format mit ** für Fettdruck. Nützlich für manuelle Anpassungen.',img:'aim-export-1'}),
-        mk('step',{n:2,title:'TXT-Datei herunterladen',body:'↓ TXT lädt die Prüfung als Textdatei herunter. Eignet sich als Archiv oder zur Weiterbearbeitung.',img:'aim-export-2'}),
-        mk('step',{n:3,title:'PDF drucken',body:'↓ PDF drucken öffnet ein neues Fenster mit der Prüfung im Drucklayout (Calibri, 10pt, 1cm Ränder). Nutze dann die Druckfunktion des Browsers oder speichere als PDF.',img:'aim-export-3'}),
-        mk('info',{icon:'📥',title:'Testportal-Format',body:'Das Testportal erkennt beim Import Fettdruck als «korrekte Antwort». Die TXT-Datei enthält **fett** für korrekte Antworten — genau das Format, das Testportal beim Import verarbeitet.',color:'warn'}),
-      ]},
-      backup:{title:'Backup & Daten',sub:'Daten sichern, wiederherstellen und übertragen',blocks:[
-        mk('info',{icon:'⚠️',title:'LocalStorage — was das bedeutet',body:'Alle Daten sind im Browser gespeichert. Das bedeutet: kein Zugriff von anderen Computern, Datenverlust beim Löschen des Browser-Caches, kein automatisches Cloud-Backup. Lokale Backup-Dateien sind der einzige Schutz.',color:'warn'}),
-        mk('step',{n:1,title:'JSON-Backup erstellen',body:'Dashboard → ↓ JSON exportieren lädt eine Datei mit allen Fragen, Weiterbildungsgängen und einer zusätzlichen Semesterübersicht herunter. Speichere die Datei an einem sicheren Ort.',img:'aim-backup-1'}),
-        mk('step',{n:2,title:'Excel-Datei als Arbeitsgrundlage',body:'Dashboard → ↓ Excel exportieren erstellt eine bearbeitbare Datei mit drei Blättern: Fragen, Weiterbildungsgänge und Semesteransicht. Diese Datei kann direkt in Excel gepflegt und später wieder in die App importiert werden.',img:'aim-backup-2'}),
-        mk('step',{n:3,title:'Wiederherstellen oder austauschen',body:'Dashboard → ↑ JSON laden oder ↑ Excel importieren. Alle aktuellen Daten werden durch die importierten Daten ersetzt. Erstelle vorher ein aktuelles Backup, falls nötig.',img:'aim-backup-3'}),
-        mk('note',{body:'Empfehlung: Backup nach jeder grösseren Änderung. Wenn du mit einer neuen Datenversion weiterarbeiten willst, zuerst ✕ Alle Daten löschen und danach die neue JSON- oder Excel-Datei importieren.'}),
-      ]},
-      settings_aim:{title:'Einstellungen',sub:'Standardverhalten des AIM Prüfungs-Managers anpassen',blocks:[
-        mk('step',{n:1,title:'Weiterbildungsgänge gesperrt beim Start',body:'Wenn aktiv (Standard: AN), öffnet sich die Weiterbildungsgänge-Ansicht immer im gesperrten Modus. Das verhindert versehentliche Änderungen. Zum Bearbeiten auf 🔓 Bearbeiten klicken.',img:'aim-settings-1'}),
-        mk('step',{n:2,title:'Standard-Zoomstufe',body:'Legt fest, in welcher Vergrösserung die Matrix-Ansicht standardmässig angezeigt wird. Standard ist jetzt 55%, damit die Semesteransicht in Prüfung erstellen sofort kompakter startet. 100% ist die volle Grösse, 55% der kleinste Massstab.',img:'aim-settings-2'}),
-        mk('step',{n:3,title:'Dunkelmodus',body:'Wechselt zwischen hellem und dunklem Design. Die Einstellung wird gespeichert und beim nächsten Start wiederhergestellt. Auch über das Mond/Sonne-Symbol in der Seitenleiste umschaltbar.',img:'aim-settings-3'}),
-        mk('info',{icon:'🔄',title:'Einstellungen zurücksetzen',body:'Setzt alle Einstellungen auf die Standardwerte zurück. Daten (Fragen, Programme) bleiben unberührt.',color:'default'}),
-      ]},
-    },
-  },
-};
-
-function makeHelpBlock(type='step'){
-  const imgId=`img_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
-  if(type==='step') return mk('step',{n:1,title:'Neuer Schritt',body:'Kurze Anleitung hier eintragen.',img:imgId});
-  if(type==='info') return mk('info',{icon:'💡',title:'Neuer Hinweis',body:'Hinweistext hier eintragen.',color:'default'});
-  if(type==='note') return mk('note',{body:'Notiz hier eintragen.'});
-  if(type==='code') return mk('code',{body:'Beispiel oder Schema hier eintragen'});
-  if(type==='cards') return mk('cards',{items:[{h:'Karte 1',b:'Text'},{h:'Karte 2',b:'Text'}]});
-  return mk('step',{n:1,title:'Neuer Schritt',body:'Kurze Anleitung hier eintragen.',img:imgId});
-}
-
-function slugHandbookLabel(value=''){
-  const base=String(value||'')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g,'')
-    .replace(/[^a-z0-9]+/g,'-')
-    .replace(/^-+|-+$/g,'');
-  return base||`handbuch-${Date.now()}`;
-}
-
-function makeHelpSection(key,label,title=''){
-  return{
-    k:key,
-    label,
-  };
-}
-
-function stripSectionNumber(label=''){
-  return String(label||'').replace(/^\s*\d+\.\s*/,'').trim();
-}
-
-function formatSectionLabel(section,index,isCustom){
-  if(!isCustom) return section?.label||`Abschnitt ${index+1}`;
-  const base=stripSectionNumber(section?.label)||'Abschnitt';
-  return `${index+1}. ${base}`;
-}
-
-function makeCustomManual(navLabel){
-  const sectionKey='section_1';
-  return{
-    navLabel,
-    isCustom:true,
-    sections:[makeHelpSection(sectionKey,'1. Allgemein',navLabel)],
-    content:{
-      [sectionKey]:{
-        title:navLabel,
-        sub:'Eigene Anleitung',
-        blocks:[makeHelpBlock('step')],
-      }
-    }
-  };
-}
-
-function normalizeHelpContent(raw){
-  const normalized={};
-  const manualKeys=[
-    ...BUILTIN_MANUAL_KEYS,
-    ...Object.keys(raw||{}).filter(key=>!BUILTIN_MANUAL_KEYS.includes(key))
-  ];
-  manualKeys.forEach(manualKey=>{
-    const defaultManual=HELP_DEFAULTS[manualKey];
-    const sourceManual=raw?.[manualKey]||defaultManual;
-    if(!sourceManual && !defaultManual) return;
-    const sourceSections=Array.isArray(sourceManual?.sections)?sourceManual.sections:[];
-    const sections=(defaultManual?.sections?.length?defaultManual.sections:sourceSections).map((section,idx)=>({
-      ...section,
-      k:section?.k||`section_${idx+1}`,
-      label:section?.label||`${idx+1}. Abschnitt`,
-    }));
-    const sectionKeys=sections.map(section=>section.k);
-    normalized[manualKey]={
-      ...(defaultManual||{}),
-      ...(sourceManual||{}),
-      isCustom:sourceManual?.isCustom||(!defaultManual),
-      sections,
-      content:{...(defaultManual?.content||{}),...(sourceManual?.content||{})},
-    };
-    sectionKeys.forEach((sectionKey,idx)=>{
-      const defaultSection=defaultManual?.content?.[sectionKey];
-      const sourceSection=sourceManual?.content?.[sectionKey]||defaultSection||{
-        title:sections[idx]?.label||`Abschnitt ${idx+1}`,
-        sub:'',
-        blocks:[],
-      };
-      let stepNo=1;
-      const blocks=(sourceSection?.blocks||defaultSection?.blocks||[]).map(block=>{
-        const normalizedBlock={...block,id:block?.id||nextHelpBlockId()};
-        if(normalizedBlock.t==='step'){
-          normalizedBlock.n=stepNo++;
-          if(!normalizedBlock.img) normalizedBlock.img=`img_${normalizedBlock.id}`;
-        }
-        return normalizedBlock;
-      });
-      normalized[manualKey].content[sectionKey]={
-        ...(defaultSection||{}),
-        ...(sourceSection||{}),
-        blocks,
-      };
-    });
-  });
-  return normalized;
-}
-
-function getManualGalleryEntries(content,manualKey){
-  const manual=content?.[manualKey];
-  if(!manual) return {};
-  const entries={};
-  (manual.sections||[]).forEach(section=>{
-    const sectionContent=manual.content?.[section.k];
-    (sectionContent?.blocks||[]).forEach(block=>{
-      if(block.t==='step'&&block.img){
-        const storageKey=`${manualKey}_${section.k}_${block.id}_${block.img}`;
-        entries[storageKey]=getHelpGallery(storageKey,block.img);
-      }
-    });
-  });
-  return entries;
-}
-
-function saveManualGalleryEntries(entries={}){
-  Object.entries(entries).forEach(([storageKey,items])=>{
-    saveHelpGallery(storageKey,Array.isArray(items)?items:[]);
-  });
-}
-
-function sanitizeZipPart(value=''){
-  return String(value||'').replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')||'item';
-}
-
-function detectMimeFromDataUrl(dataUrl=''){
-  const match=String(dataUrl).match(/^data:([^;]+);base64,/);
-  return match?.[1]||'image/png';
-}
-
-function detectExtFromMime(mime='image/png'){
-  if(mime==='image/jpeg') return 'jpg';
-  if(mime==='image/svg+xml') return 'svg';
-  if(mime==='image/gif') return 'gif';
-  if(mime==='image/webp') return 'webp';
-  return 'png';
-}
-
-async function exportManualZipBundle(manualKey,manualData,allContent){
-  const zip=new JSZip();
-  const galleries=getManualGalleryEntries(allContent,manualKey);
-  const manifest={
-    version:2,
-    type:'aim-handbook-bundle',
-    exportedAt:new Date().toISOString(),
-    manualKey,
-    manual:manualData,
-    galleries:{},
-  };
-
-  for(const [storageKey,items] of Object.entries(galleries)){
-    manifest.galleries[storageKey]=[];
-    for(let index=0;index<(items||[]).length;index++){
-      const item=items[index];
-      const mime=detectMimeFromDataUrl(item?.src||'');
-      const ext=detectExtFromMime(mime);
-      const fileName=`images/${sanitizeZipPart(storageKey)}/${sanitizeZipPart(item?.id||String(index))}.${ext}`;
-      if(item?.src){
-        const blob=await fetch(item.src).then(r=>r.blob());
-        zip.file(fileName,blob);
-      }
-      manifest.galleries[storageKey].push({
-        id:item?.id||`img_${index}`,
-        annotations:item?.annotations||[],
-        file:fileName,
-        mime,
-      });
-    }
-  }
-
-  zip.file('handbook.json',JSON.stringify(manifest,null,2));
-  return zip.generateAsync({type:'blob'});
-}
-
-async function importManualBundle(file){
-  const lower=String(file?.name||'').toLowerCase();
-  if(lower.endsWith('.zip')){
-    const zip=await JSZip.loadAsync(file);
-    const manifestFile=zip.file('handbook.json');
-    if(!manifestFile) throw new Error('missing manifest');
-    const manifest=JSON.parse(await manifestFile.async('string'));
-    const galleries={};
-    for(const [storageKey,items] of Object.entries(manifest?.galleries||{})){
-      galleries[storageKey]=[];
-      for(const item of items){
-        const imgFile=item?.file?zip.file(item.file):null;
-        let src='';
-        if(imgFile){
-          const base64=await imgFile.async('base64');
-          src=`data:${item?.mime||'image/png'};base64,${base64}`;
-        }
-        galleries[storageKey].push({
-          id:item?.id||`img_${Date.now()}`,
-          src,
-          annotations:item?.annotations||[],
-        });
-      }
-    }
-    return{manualKey:manifest?.manualKey,manual:manifest?.manual,galleries};
-  }
-
-  const text=await file.text();
-  const parsed=JSON.parse(text);
-  return{
-    manualKey:parsed?.manualKey,
-    manual:parsed?.manual,
-    galleries:parsed?.galleries||{},
-  };
-}
-
-function RenderBlock({block,idx,editMode,onUpdate,onDelete,onMoveUp,onMoveDown,canMoveUp,canMoveDown,onAddAfter,imageScopeKey}){
-  const upd=(field,val)=>onUpdate(idx,{...block,[field]:val});
-  const inpStyle={width:'100%',fontFamily:sans,fontSize:'13px',color:'var(--c-tx)',background:'var(--c-wW)',border:'1px solid var(--c-ac)',borderRadius:4,padding:'5px 8px',boxSizing:'border-box'};
-  const taStyle={...inpStyle,resize:'vertical',minHeight:64,lineHeight:1.65};
-  let rendered=null;
-
-  if(block.t==='step'){
-    rendered=(
-      <div style={{display:'flex',gap:16}}>
-        <div style={{flexShrink:0,width:32,height:32,borderRadius:'50%',background:C.t,color:C.wh,fontFamily:sans,fontWeight:700,fontSize:'14px',display:'flex',alignItems:'center',justifyContent:'center'}}>{block.n}</div>
-        <div style={{flex:1}}>
-          {editMode?<input style={{...inpStyle,fontFamily:serif,fontSize:'15px',fontWeight:700,marginBottom:6}} value={block.title} onChange={e=>upd('title',e.target.value)}/>
-            :<div style={{fontFamily:serif,fontSize:'15px',fontWeight:700,color:C.tD,marginBottom:6}}>{block.title}</div>}
-          {editMode?<textarea style={{...taStyle,fontSize:'14px'}} value={block.body} onChange={e=>upd('body',e.target.value)}/>
-            :<div style={{fontSize:'14px',color:C.tx,lineHeight:1.65,whiteSpace:'pre-line'}}>{block.body}</div>}
-          {block.img&&<ImageSlot id={block.img} storageId={`${imageScopeKey}_${block.img}`} editMode={editMode}/>}
-        </div>
-      </div>
-    );
-  }
-  if(block.t==='info'){
-    const bg=block.color==='warn'?'#FEF3E2':block.color==='green'?C.gP:C.tP;
-    const tx=block.color==='warn'?'#7A4F10':block.color==='green'?'#1a5c32':C.tD;
-    const br=block.color==='warn'?'#F6C90E44':block.color==='green'?'#86efac':C.tL;
-    rendered=(
-      <div style={{background:bg,border:'1px solid '+br,borderRadius:8,padding:'14px 16px',marginBottom:16}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-          {editMode?<input style={{...inpStyle,width:44,textAlign:'center',fontSize:'18px',padding:'2px 4px'}} value={block.icon} onChange={e=>upd('icon',e.target.value)}/>
-            :<span style={{fontSize:'18px'}}>{block.icon}</span>}
-          {editMode?<input style={{...inpStyle,fontWeight:700,fontSize:'14px'}} value={block.title} onChange={e=>upd('title',e.target.value)}/>
-            :<span style={{fontWeight:700,fontSize:'14px',color:tx}}>{block.title}</span>}
-        </div>
-        {editMode?<textarea style={{...taStyle}} value={block.body} onChange={e=>upd('body',e.target.value)}/>
-          :<div style={{fontSize:'13px',color:tx,lineHeight:1.65,whiteSpace:'pre-line'}}>{block.body}</div>}
-      </div>
-    );
-  }
-  if(block.t==='cards'){
-    const cols=Math.min(block.items.length,3);
-    rendered=(
-      <div style={{display:'grid',gridTemplateColumns:'repeat('+cols+',1fr)',gap:14,marginBottom:16}}>
-        {block.items.map((item,ii)=>(
-          <div key={ii} style={{background:C.wW,border:'1px solid '+C.bo,borderRadius:8,padding:14}}>
-            {editMode?(
-              <>
-                <input style={{...inpStyle,fontWeight:700,fontSize:'14px',marginBottom:6}} value={item.h} onChange={e=>{const it=[...block.items];it[ii]={...item,h:e.target.value};upd('items',it);}}/>
-                <textarea style={{...taStyle,fontSize:'13px',minHeight:50}} value={item.b} onChange={e=>{const it=[...block.items];it[ii]={...item,b:e.target.value};upd('items',it);}}/>
-              </>
-            ):(
-              <>
-                <div style={{fontWeight:700,fontSize:'14px',color:C.tD,marginBottom:6}}>{item.h}</div>
-                <div style={{fontSize:'13px',color:C.tx,lineHeight:1.6}}>{item.b}</div>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if(block.t==='note'){
-    rendered=(
-      <div style={{background:C.tP,border:'1px solid '+C.tL,borderRadius:8,padding:'12px 16px',marginBottom:16}}>
-        {editMode?<textarea style={{...taStyle}} value={block.body} onChange={e=>upd('body',e.target.value)}/>
-          :<div style={{fontSize:'13px',color:C.tx,lineHeight:1.65,whiteSpace:'pre-line'}}>{block.body}</div>}
-      </div>
-    );
-  }
-  if(block.t==='code'){
-    rendered=(
-      <div style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:8,padding:16,marginBottom:16}}>
-        <div style={{fontSize:'11px',letterSpacing:'1.4px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:600}}>Empfohlenes Benennungsschema</div>
-        {editMode?<input style={{...inpStyle,fontFamily:'monospace',fontSize:'12px'}} value={block.body} onChange={e=>upd('body',e.target.value)}/>
-          :<code style={{background:C.st,padding:'2px 6px',borderRadius:3,fontSize:'12px'}}>{block.body}</code>}
-      </div>
-    );
-  }
-  if(!rendered) return null;
-  return(
-    <div style={{marginBottom:28}}>
-      {editMode&&(
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
-          <div style={{fontSize:'11px',letterSpacing:'1px',textTransform:'uppercase',color:C.mu,fontWeight:600}}>
-            {block.t==='step'?'Schritt':block.t==='info'?'Hinweis':block.t==='cards'?'Karten':block.t==='note'?'Notiz':'Code'}
-          </div>
-          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-            <button onClick={onMoveUp} disabled={!canMoveUp} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:4,cursor:canMoveUp?'pointer':'not-allowed',padding:'4px 8px',fontSize:'11px',opacity:canMoveUp?1:.45}}>↑</button>
-            <button onClick={onMoveDown} disabled={!canMoveDown} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:4,cursor:canMoveDown?'pointer':'not-allowed',padding:'4px 8px',fontSize:'11px',opacity:canMoveDown?1:.45}}>↓</button>
-            <button onClick={()=>onAddAfter?.('step')} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>+ Schritt</button>
-            <button onClick={onDelete} style={{background:'var(--c-re)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>✕ Löschen</button>
-          </div>
-        </div>
-      )}
-      {rendered}
-    </div>
-  );
-}
-
-function escapeHtml(value=''){
-  return String(value)
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;')
-    .replace(/'/g,'&#39;');
-}
-
-function renderHelpBodyHtml(text=''){
-  return escapeHtml(text).replace(/\n/g,'<br/>');
-}
-
-function renderHelpAnnotationHtml(anno){
-  const rotation=Number(anno.rotation||0);
-  const base=`position:absolute; left:${anno.x}%; top:${anno.y}%; transform:rotate(${rotation}deg);`;
-  if(anno.type==='box'){
-    return `<div style="${base} width:${anno.w}%; height:${anno.h}%; border:3px solid ${anno.color}; border-radius:6px; box-sizing:border-box; transform-origin:center center;"></div>`;
-  }
-  if(anno.type==='circle'){
-    return `<div style="${base} width:${anno.w}%; height:${anno.h}%; border:3px solid ${anno.color}; border-radius:999px; box-sizing:border-box; transform-origin:center center;"></div>`;
-  }
-  if(anno.type==='arrow'){
-    return `<div style="${base} width:${anno.w}%; height:${anno.h}%; transform-origin:left center;"><svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%; height:100%; display:block; overflow:visible;"><line x1="0" y1="50" x2="78" y2="50" stroke="${anno.color}" stroke-width="10" stroke-linecap="round"></line><polygon points="78,24 100,50 78,76" fill="${anno.color}"></polygon></svg></div>`;
-  }
-  if(anno.type==='text'){
-    return `<div style="${base} color:${anno.color}; font-weight:700; font-size:16px; line-height:1.2; background:rgba(255,255,255,0.82); padding:2px 6px; border-radius:4px; width:${anno.w}%; min-height:${anno.h}%; word-break:break-word; transform-origin:left top; box-sizing:border-box;">${escapeHtml(anno.text||'Text')}</div>`;
-  }
-  return '';
-}
-
-function renderHelpImageHtml(storageId,imgId){
-  try{
-    const items=getHelpGallery(storageId,imgId);
-    if(!items.length) return '';
-    // Sanity check src — must be a data: URL (what FileReader.readAsDataURL
-    // produces) or a relative/absolute http/file URL. Reject anything else
-    // (javascript:, data:text/html, ...) and escape what's left.
-    const safeSrc=raw=>{
-      const s=String(raw||'');
-      if(!/^(data:image\/|https?:|file:|\/)/i.test(s)) return '';
-      return escapeHtml(s);
-    };
-    const images=items.map(item=>`
-      <div style="flex:0 0 300px; max-width:300px;">
-        <div style="position:relative; border:1px solid #d7d7d2; border-radius:8px; overflow:hidden; background:#fff;">
-          <img src="${safeSrc(item.src)}" alt="" style="width:100%; display:block;" />
-          <div style="position:absolute; inset:0;">
-            ${(item.annotations||[]).map(renderHelpAnnotationHtml).join('')}
-          </div>
-        </div>
-      </div>
-    `).join('');
-    return `<div style="margin-top:12px; overflow-x:auto;"><div style="display:flex; gap:12px; min-width:min-content; padding-bottom:4px;">${images}</div></div>`;
-  }catch{
-    return '';
-  }
-}
-
-function renderHelpBlockHtml(block,storageScope){
-  if(block.t==='step'){
-    return `
-      <div style="display:flex; gap:14px; margin:0 0 22px; page-break-inside:avoid;">
-        <div style="width:30px; height:30px; border-radius:50%; background:#d71920; color:#fff; display:flex; align-items:center; justify-content:center; font:700 14px 'Source Sans 3', sans-serif; flex-shrink:0;">${escapeHtml(block.n)}</div>
-        <div style="flex:1">
-          <div style="font:700 16px 'Libre Baskerville', Georgia, serif; color:#111; margin:0 0 6px;">${escapeHtml(block.title||'')}</div>
-          <div style="font:400 13px/1.7 'Source Sans 3', system-ui, sans-serif; color:#111;">${renderHelpBodyHtml(block.body||'')}</div>
-          ${block.img?renderHelpImageHtml(`${storageScope}_${block.id}_${block.img}`,block.img):''}
-        </div>
-      </div>
-    `;
-  }
-  if(block.t==='info'){
-    const styleMap={
-      warn:{bg:'#FEF3E2',border:'#f3c97b',text:'#7A4F10'},
-      green:{bg:'#edf7ef',border:'#86efac',text:'#1d6b3e'},
-      default:{bg:'#fff5ee',border:'#f3dcc9',text:'#111111'},
-    };
-    const styles=styleMap[block.color]||styleMap.default;
-    return `
-      <div style="background:${styles.bg}; border:1px solid ${styles.border}; border-radius:8px; padding:14px 16px; margin:0 0 16px; page-break-inside:avoid;">
-        <div style="font:700 14px 'Source Sans 3', sans-serif; color:${styles.text}; margin:0 0 6px;">${escapeHtml(block.icon||'')} ${escapeHtml(block.title||'')}</div>
-        <div style="font:400 13px/1.7 'Source Sans 3', system-ui, sans-serif; color:${styles.text};">${renderHelpBodyHtml(block.body||'')}</div>
-      </div>
-    `;
-  }
-  if(block.t==='cards'){
-    const cards=(block.items||[]).map(item=>`
-      <div style="border:1px solid #d7d7d2; border-radius:8px; padding:14px; background:#fafaf8; min-height:92px;">
-        <div style="font:700 14px 'Source Sans 3', sans-serif; color:#111; margin:0 0 6px;">${escapeHtml(item.h||'')}</div>
-        <div style="font:400 13px/1.65 'Source Sans 3', system-ui, sans-serif; color:#111;">${renderHelpBodyHtml(item.b||'')}</div>
-      </div>
-    `).join('');
-    return `<div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; margin:0 0 16px;">${cards}</div>`;
-  }
-  if(block.t==='note'){
-    return `<div style="background:#fff5ee; border:1px solid #f3dcc9; border-radius:8px; padding:12px 16px; margin:0 0 16px; font:400 13px/1.7 'Source Sans 3', system-ui, sans-serif; color:#111;">${renderHelpBodyHtml(block.body||'')}</div>`;
-  }
-  if(block.t==='code'){
-    return `
-      <div style="border:1px solid #d7d7d2; border-radius:8px; padding:14px 16px; margin:0 0 16px;">
-        <div style="font:600 11px 'Source Sans 3', sans-serif; letter-spacing:1.4px; text-transform:uppercase; color:#666; margin:0 0 8px;">Empfohlenes Benennungsschema</div>
-        <code style="display:inline-block; background:#efefec; border-radius:4px; padding:4px 8px; font:400 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color:#111;">${escapeHtml(block.body||'')}</code>
-      </div>
-    `;
-  }
-  return '';
-}
-
-function printHelpManualPdf(manualKey, manualData){
-  const w=window.open('','_blank');
-  if(!w)return false;
-  const sectionsHtml=(manualData.sections||[]).map(section=>{
-    const content=manualData.content?.[section.k];
-    if(!content)return '';
-    const storageScope=`${manualKey}_${section.k}`;
-    return `
-      <section style="margin:0 0 34px;">
-        <div style="border-bottom:2px solid #111; padding-bottom:8px; margin-bottom:14px;">
-          <h2 style="margin:0 0 4px; font:700 20px 'Libre Baskerville', Georgia, serif; color:#111;">${escapeHtml(content.title||'')}</h2>
-          ${content.sub?`<div style="font:400 13px 'Source Sans 3', system-ui, sans-serif; color:#666;">${escapeHtml(content.sub)}</div>`:''}
-        </div>
-        ${(content.blocks||[]).map(block=>renderHelpBlockHtml(block,storageScope)).join('')}
-      </section>
-    `;
-  }).join('');
-
-  w.document.write(`<!DOCTYPE html>
-  <html>
-    <head>
-      <title>${escapeHtml(manualData.navLabel||manualKey)}</title>
-      <style>
-        body{font-family:'Source Sans 3',system-ui,sans-serif;color:#111;margin:0.5cm;background:#fff;}
-        @page{margin:0.5cm;}
-        h1,h2,h3{page-break-after:avoid;}
-        section{page-break-inside:auto;}
-      </style>
-      <!-- No remote font load. System fonts fall back gracefully and the
-           print window is fully offline-safe. -->
-
-    </head>
-    <body>
-      <header style="margin:0 0 24px;">
-        <div style="font:600 11px 'Source Sans 3', sans-serif; letter-spacing:1.8px; text-transform:uppercase; color:#666; margin-bottom:8px;">AIM Informationshandbuch</div>
-        <h1 style="margin:0 0 6px; font:700 26px 'Libre Baskerville', Georgia, serif; color:#111;">${escapeHtml(manualData.navLabel||manualKey)}</h1>
-        <div style="font:400 13px 'Source Sans 3', system-ui, sans-serif; color:#666;">Exportiert aus dem AIM Prüfungs-Manager</div>
-      </header>
-      ${sectionsHtml}
-      <script>window.addEventListener('afterprint',function(){try{window.close();}catch(e){}});</script>
-    </body>
-  </html>`);
-  w.document.close();
-  w.focus();
-  setTimeout(()=>w.print(),500);
-  return true;
-}
-
-function HelpPage(){
-  const[manual,setManual]=useState('testportal');
-  const[section,setSection]=useState(null);
-  const[editMode,setEditMode]=useState(false);
-  const[unsaved,setUnsaved]=useState(false);
-  const importRef=useRef(null);
-
-  // Publish unsaved state to a window flag so the root's navTo wrapper can
-  // intercept navigation away from this page and prompt the user.
-  useEffect(()=>{
-    try{ window.__aimHelpUnsaved=unsaved; }catch{}
-    return ()=>{ try{ window.__aimHelpUnsaved=false; }catch{} };
-  },[unsaved]);
-  const[content,setContent]=useState(()=>{
-    try{
-      const s=JSON.parse(window.localStorage.getItem(HELP_KEY));
-      if(s) return normalizeHelpContent(s);
-    }catch{}
-    return normalizeHelpContent(HELP_DEFAULTS);
-  });
-  const manualKeys=[...BUILTIN_MANUAL_KEYS,...Object.keys(content).filter(key=>!BUILTIN_MANUAL_KEYS.includes(key))];
-  useEffect(()=>{
-    if(!content[manual]) setManual(manualKeys[0]||'testportal');
-  },[content,manual,manualKeys]);
-
-  const curManual=content[manual]||content[manualKeys[0]];
-  if(!curManual) return null;
-  const defaultSection=curManual.sections[0].k;
-  const activeSection=section&&curManual.content[section]?section:defaultSection;
-  const curSection=curManual.content[activeSection];
-
-  const updateSectionBlocks=(sk,updater)=>{
-    setUnsaved(true);
-    setContent(c=>normalizeHelpContent({
-      ...c,
-      [manual]:{
-        ...c[manual],
-        content:{
-          ...c[manual].content,
-          [sk]:{
-            ...c[manual].content[sk],
-            blocks:updater(c[manual].content[sk].blocks||[]),
-          }
-        }
-      }
-    }));
-  };
-  const updateBlock=(sk,idx,nb)=>{
-    updateSectionBlocks(sk,blocks=>blocks.map((b,i)=>i===idx?nb:b));
-  };
-  const updateMeta=(sk,field,val)=>{
-    setUnsaved(true);
-    setContent(c=>normalizeHelpContent({...c,[manual]:{...c[manual],content:{...c[manual].content,[sk]:{...c[manual].content[sk],[field]:val}}}}));
-  };
-  const addBlock=(sk,type='step',afterIndex=null)=>{
-    const newBlock=makeHelpBlock(type);
-    updateSectionBlocks(sk,blocks=>{
-      const next=[...blocks];
-      const insertAt=afterIndex===null?next.length:afterIndex+1;
-      next.splice(insertAt,0,newBlock);
-      return next;
-    });
-  };
-  const deleteBlock=(sk,idx)=>{
-    updateSectionBlocks(sk,blocks=>blocks.filter((_,i)=>i!==idx));
-  };
-  const moveBlock=(sk,idx,direction)=>{
-    updateSectionBlocks(sk,blocks=>{
-      const target=idx+direction;
-      if(target<0 || target>=blocks.length) return blocks;
-      const next=[...blocks];
-      [next[idx],next[target]]=[next[target],next[idx]];
-      return next;
-    });
-  };
-  const save=()=>{
-    try{
-      window.localStorage.setItem(HELP_KEY,JSON.stringify(normalizeHelpContent(content)));
-      setUnsaved(false);
-    }catch(err){
-      window.alert(`Hilfe-Inhalt konnte nicht gespeichert werden: ${err?.message||'Speicher voll'}. Bitte das Handbuch als ZIP exportieren um Daten nicht zu verlieren.`);
-    }
-  };
-  const updateManual=(updater)=>{
-    setUnsaved(true);
-    setContent(c=>normalizeHelpContent({
-      ...c,
-      [manual]:updater(c[manual]),
-    }));
-  };
-  const renameManual=label=>{
-    updateManual(cur=>({...cur,navLabel:label}));
-  };
-  const renameSectionLabel=(sectionKey,label)=>{
-    updateManual(cur=>({
-      ...cur,
-      sections:(cur.sections||[]).map(section=>section.k===sectionKey?{...section,label:stripSectionNumber(label)||'Abschnitt'}:section),
-    }));
-  };
-  const addSection=()=>{
-    if(!curManual?.isCustom) return;
-    const nextIndex=(curManual.sections?.length||0)+1;
-    const sectionKey=`section_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
-    updateManual(cur=>({
-      ...cur,
-      sections:[...(cur.sections||[]),makeHelpSection(sectionKey,'Abschnitt')],
-      content:{
-        ...cur.content,
-        [sectionKey]:{
-          title:`Abschnitt ${nextIndex}`,
-          sub:'Eigene Sektion',
-          blocks:[makeHelpBlock('step')],
-        }
-      }
-    }));
-    setSection(sectionKey);
-  };
-  const moveSection=(sectionKey,direction)=>{
-    if(!curManual?.isCustom) return;
-    updateManual(cur=>{
-      const sections=[...(cur.sections||[])];
-      const idx=sections.findIndex(section=>section.k===sectionKey);
-      const target=idx+direction;
-      if(idx===-1 || target<0 || target>=sections.length) return cur;
-      [sections[idx],sections[target]]=[sections[target],sections[idx]];
-      return {...cur,sections};
-    });
-  };
-  const deleteSection=sectionKey=>{
-    if(!curManual?.isCustom) return;
-    if((curManual.sections||[]).length<=1){
-      window.alert('Ein eigenes Handbuch muss mindestens eine Sektion haben.');
-      return;
-    }
-    if(!window.confirm('Diese Sektion wirklich löschen?')) return;
-    updateManual(cur=>{
-      const nextSections=(cur.sections||[]).filter(section=>section.k!==sectionKey);
-      const nextContent={...cur.content};
-      delete nextContent[sectionKey];
-      return {...cur,sections:nextSections,content:nextContent};
-    });
-    if(activeSection===sectionKey){
-      const fallback=(curManual.sections||[]).find(section=>section.k!==sectionKey)?.k||null;
-      setSection(fallback);
-    }
-  };
-  const addManual=()=>{
-    const input=window.prompt('Name des neuen Handbuchs');
-    const label=String(input||'').trim();
-    if(!label) return;
-    let key=slugHandbookLabel(label);
-    let counter=2;
-    while(content[key]){
-      key=`${slugHandbookLabel(label)}-${counter++}`;
-    }
-    const next=normalizeHelpContent({...content,[key]:makeCustomManual(label)});
-    setContent(next);
-    setManual(key);
-    setSection(null);
-    setUnsaved(true);
-  };
-  const deleteManual=()=>{
-    if(!curManual?.isCustom) return;
-    if(!window.confirm(`Handbuch „${curManual.navLabel}“ wirklich löschen?`)) return;
-    setContent(c=>{
-      const next={...c};
-      delete next[manual];
-      return normalizeHelpContent(next);
-    });
-    setManual('testportal');
-    setSection(null);
-    setUnsaved(true);
-  };
-  const exportManual=async()=>{
-    try{
-      const blob=await exportManualZipBundle(manual,curManual,content);
-      dlFile(blob,`${slugHandbookLabel(curManual?.navLabel||manual)}.aim-handbook.zip`,'application/zip');
-    }catch{
-      window.alert('Das Handbuch konnte nicht als ZIP exportiert werden.');
-    }
-  };
-  const importManual=async e=>{
-    const file=e.target.files?.[0];
-    if(!file) return;
-    try{
-      const parsed=await importManualBundle(file);
-      const importedManual=parsed?.manual;
-      if(!importedManual || !importedManual.navLabel){
-        throw new Error('invalid');
-      }
-      const requestedKey=String(parsed.manualKey||slugHandbookLabel(importedManual.navLabel));
-      const key=BUILTIN_MANUAL_KEYS.includes(requestedKey)?requestedKey:requestedKey;
-      setContent(c=>normalizeHelpContent({...c,[key]:{...importedManual,isCustom:!BUILTIN_MANUAL_KEYS.includes(key)}}));
-      saveManualGalleryEntries(parsed.galleries||{});
-      setManual(key);
-      setSection(null);
-      setUnsaved(true);
-    }catch{
-      window.alert('Die Handbuch-Datei konnte nicht importiert werden.');
-    }finally{
-      e.target.value='';
-    }
-  };
-
-  return(
-    <div style={{padding:28}}>
-      <input ref={importRef} type="file" accept=".zip,.json" style={{display:'none'}} onChange={importManual}/>
-      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20,flexWrap:'wrap'}}>
-        <div style={{display:'flex',gap:6,flex:1,flexWrap:'wrap'}}>
-          {manualKeys.map(m=>(
-            <button key={m} onClick={()=>{setManual(m);setSection(null);}} style={{padding:'7px 16px',border:'1px solid '+C.bo,borderRadius:6,cursor:'pointer',fontFamily:sans,fontSize:'13px',fontWeight:600,background:manual===m?C.tD:'transparent',color:manual===m?C.wh:C.tx,transition:'all 0.15s'}}>
-              {content[m]?.navLabel||HELP_DEFAULTS[m]?.navLabel||m}
-            </button>
-          ))}
-          {editMode&&<button onClick={addManual} style={{padding:'7px 16px',border:'1px dashed '+C.bo,borderRadius:6,cursor:'pointer',fontFamily:sans,fontSize:'13px',fontWeight:600,background:'transparent',color:C.tx}}>+ Eigenes Handbuch</button>}
-        </div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <Btn ch="↑ Handbuch importieren" onClick={()=>importRef.current?.click()} v="ghost" sm/>
-          <Btn ch="↓ Handbuch exportieren" onClick={exportManual} v="ghost" sm/>
-          {editMode&&curManual?.isCustom&&<Btn ch="✕ Handbuch löschen" onClick={deleteManual} v="danger" sm/>}
-          <Btn ch="↓ Handbuch als PDF" onClick={()=>{
-            const ok=printHelpManualPdf(manual,curManual);
-            if(!ok) window.alert('PDF-Druckfenster konnte nicht geöffnet werden. Bitte App neu starten und erneut versuchen.');
-          }} v="ghost" sm/>
-          {unsaved&&editMode&&<span style={{fontSize:'12px',color:C.tM,fontWeight:500}}>● Ungespeichert</span>}
-          {editMode&&<Btn ch="💾 Speichern" onClick={save} v="primary" sm/>}
-          <Btn ch={editMode?'🔒 Sperren':'🔓 Bearbeiten'} onClick={()=>{setEditMode(m=>!m);}} v={editMode?'secondary':'ghost'} sm/>
-        </div>
-      </div>
-      {editMode&&<div style={{background:'#FEF3E2',border:'1px solid #F6C90E44',borderRadius:6,padding:'8px 14px',marginBottom:16,fontSize:'12px',color:'#7A4F10'}}>✏️ Bearbeitungsmodus aktiv — Klicke in die Felder um Text zu bearbeiten. Klicke auf 💾 Speichern um Änderungen dauerhaft zu sichern.</div>}
-        <div style={{display:'grid',gridTemplateColumns:'220px 1fr',gap:24,alignItems:'start'}}>
-        <div style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:8,overflow:'hidden',position:'sticky',top:20}}>
-          <div style={{padding:'10px 14px',background:C.tD,fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.tL,fontWeight:500}}>{curManual.navLabel}</div>
-          {editMode&&curManual?.isCustom&&(
-            <div style={{padding:'10px 14px',borderBottom:'1px solid '+C.bo,background:C.wW}}>
-              <button onClick={addSection} style={{width:'100%',background:C.wh,border:'1px solid '+C.bo,borderRadius:6,cursor:'pointer',padding:'7px 10px',fontSize:'12px'}}>+ Neue Sektion</button>
-            </div>
-          )}
-          {curManual.sections.map((s,idx)=>(
-            <div key={s.k} style={{borderBottom:'1px solid '+C.bo}}>
-              <button onClick={()=>setSection(s.k)} style={{width:'100%',textAlign:'left',padding:'10px 14px',background:activeSection===s.k?C.tP:'transparent',color:activeSection===s.k?C.tD:C.tx,border:'none',borderLeft:activeSection===s.k?'3px solid '+C.t:'3px solid transparent',cursor:'pointer',fontFamily:sans,fontSize:'13px',fontWeight:activeSection===s.k?600:400}}>
-                {formatSectionLabel(s,idx,!!curManual?.isCustom)}
-              </button>
-              {editMode&&curManual?.isCustom&&activeSection===s.k&&(
-                <div style={{padding:'0 14px 10px',display:'grid',gap:8}}>
-                  <input style={{width:'100%',fontSize:'12px',color:C.tx,border:'1px solid '+C.ac,borderRadius:4,padding:'5px 8px',boxSizing:'border-box',background:C.wh}} value={stripSectionNumber(s.label||'')} onChange={e=>renameSectionLabel(s.k,e.target.value)} placeholder="Sektionsname"/>
-                  <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                    <button onClick={()=>moveSection(s.k,-1)} disabled={idx===0} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:4,cursor:idx===0?'not-allowed':'pointer',padding:'4px 8px',fontSize:'11px',opacity:idx===0?0.45:1}}>↑</button>
-                    <button onClick={()=>moveSection(s.k,1)} disabled={idx===curManual.sections.length-1} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:4,cursor:idx===curManual.sections.length-1?'not-allowed':'pointer',padding:'4px 8px',fontSize:'11px',opacity:idx===curManual.sections.length-1?0.45:1}}>↓</button>
-                    <button onClick={()=>deleteSection(s.k)} style={{background:'var(--c-re)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',padding:'4px 8px',fontSize:'11px'}}>✕ Löschen</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-        {curSection&&(
-          <div>
-            <div style={{marginBottom:20}}>
-              {editMode&&(
-                <input style={{width:'100%',fontSize:'12px',color:C.mu,border:'1px solid '+C.ac,borderRadius:4,padding:'4px 8px',boxSizing:'border-box',marginBottom:8}} value={curManual.navLabel||''} onChange={e=>renameManual(e.target.value)} placeholder="Handbuchname"/>
-              )}
-              {editMode
-                ?<input style={{width:'100%',fontFamily:serif,fontSize:'20px',fontWeight:700,color:C.tD,border:'1px solid '+C.ac,borderRadius:4,padding:'5px 10px',marginBottom:6,boxSizing:'border-box'}} value={curSection.title} onChange={e=>updateMeta(activeSection,'title',e.target.value)}/>
-                :<h1 style={{fontFamily:serif,fontSize:'20px',color:C.tD,margin:'0 0 4px',fontWeight:700}}>{curSection.title}</h1>}
-              {editMode
-                ?<input style={{width:'100%',fontSize:'13px',color:C.mu,border:'1px solid '+C.ac,borderRadius:4,padding:'4px 8px',boxSizing:'border-box'}} value={curSection.sub||''} onChange={e=>updateMeta(activeSection,'sub',e.target.value)}/>
-                :<p style={{color:C.mu,fontSize:'13px',margin:0}}>{curSection.sub}</p>}
-            </div>
-            {editMode&&(
-              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:16}}>
-                <button onClick={()=>addBlock(activeSection,'step')} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:6,cursor:'pointer',padding:'7px 10px',fontSize:'12px'}}>+ Neuer Schritt</button>
-                <button onClick={()=>addBlock(activeSection,'info')} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:6,cursor:'pointer',padding:'7px 10px',fontSize:'12px'}}>+ Neuer Hinweis</button>
-                <button onClick={()=>addBlock(activeSection,'note')} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:6,cursor:'pointer',padding:'7px 10px',fontSize:'12px'}}>+ Neue Notiz</button>
-                <button onClick={()=>addBlock(activeSection,'code')} style={{background:C.wh,border:'1px solid '+C.bo,borderRadius:6,cursor:'pointer',padding:'7px 10px',fontSize:'12px'}}>+ Neuer Codeblock</button>
-              </div>
-            )}
-            {curSection.blocks.map((block,idx)=>(
-              <RenderBlock
-                key={`${manual}_${activeSection}_${block.id}`}
-                block={block}
-                idx={idx}
-                editMode={editMode}
-                onUpdate={(i,nb)=>updateBlock(activeSection,i,nb)}
-                onDelete={()=>deleteBlock(activeSection,idx)}
-                onMoveUp={()=>moveBlock(activeSection,idx,-1)}
-                onMoveDown={()=>moveBlock(activeSection,idx,1)}
-                canMoveUp={idx>0}
-                canMoveDown={idx<curSection.blocks.length-1}
-                onAddAfter={type=>addBlock(activeSection,type,idx)}
-                imageScopeKey={`${manual}_${activeSection}_${block.id}`}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function AIMExamManager(){
@@ -4364,20 +3190,6 @@ export default function AIMExamManager(){
   // (e.g. quota exceeded). On false we warn the user — the destructive
   // op still proceeds, but they should know the safety net is missing.
   const saveLastBackup=useCallback(()=>{
-    let help=null;
-    const galleries={};
-    try{
-      const raw=window.localStorage.getItem('aim_help_v2');
-      if(raw) help=JSON.parse(raw);
-    }catch{}
-    try{
-      for(let i=0;i<window.localStorage.length;i++){
-        const key=window.localStorage.key(i);
-        if(key && key.startsWith('aim_gallery_')){
-          try{ galleries[key]=JSON.parse(window.localStorage.getItem(key)||'null'); }catch{}
-        }
-      }
-    }catch{}
     const snapshot={
       version:4,
       capturedAt:new Date().toISOString(),
@@ -4386,8 +3198,6 @@ export default function AIMExamManager(){
       programs,
       savedExams,
       currentExam:exam?{exam,name:examName||''}:null,
-      help,
-      galleries,
       courseTags,
     };
     try{
@@ -4408,17 +3218,12 @@ export default function AIMExamManager(){
     setExam(null);
     setExamName('');
     setCourseTags({});
-    // Wipe ALL data-bearing keys (including help content and every gallery
-    // entry). Preserve user-preference keys (dark mode, sidebar, settings,
-    // init flag, update-dismissed, last_backup) so the app's chrome stays
-    // as the user configured it AND the safety net survives.
-    const DATA_KEYS=['aim_q','aim_p','aim_saved_exams','aim_exam','aim_help_v2','aim_course_tags'];
+    // Wipe ALL data-bearing keys. Preserve user-preference keys (dark mode,
+    // sidebar, settings, init flag, update-dismissed, last_backup) so the
+    // app's chrome stays as the user configured it AND the safety net survives.
+    const DATA_KEYS=['aim_q','aim_p','aim_saved_exams','aim_exam','aim_course_tags'];
     try{
       DATA_KEYS.forEach(k=>window.localStorage.removeItem(k));
-      for(let i=window.localStorage.length-1;i>=0;i--){
-        const key=window.localStorage.key(i);
-        if(key && key.startsWith('aim_gallery_')) window.localStorage.removeItem(key);
-      }
     }catch{}
     setView('dashboard');
     showToast('Alle App-Daten wurden gelöscht. Vorheriger Stand wurde gesichert (siehe Dashboard → Letzten Stand wiederherstellen).','success');
@@ -4509,25 +3314,10 @@ export default function AIMExamManager(){
     }catch{}
   },[]);
 
-  // navTo wraps setView with an unsaved-changes guard for the Help editor.
-  // HelpPage publishes its unsaved state to window.__aimHelpUnsaved so we
-  // can intercept navigation from anywhere (sidebar, dashboard buttons).
+  // navTo is a thin wrapper around setView, passed to child pages as setView.
   const navTo=useCallback(v=>{
-    const unsaved=(typeof window!=='undefined'&&window.__aimHelpUnsaved)||false;
-    if(view==='help' && v!=='help' && unsaved){
-      showConfirm({
-        message:'Im Hilfe-Editor gibt es ungespeicherte Änderungen. Trotzdem zur anderen Seite wechseln?',
-        confirmLabel:'Verwerfen',
-        confirmV:'danger',
-        onConfirm:()=>{
-          try{ window.__aimHelpUnsaved=false; }catch{}
-          setView(v);
-        },
-      });
-      return;
-    }
     setView(v);
-  },[view,showConfirm]);
+  },[]);
 
   return(
     <div style={{display:'flex',minHeight:'100vh',fontFamily:sans,background:C.wW}}>
@@ -4539,8 +3329,7 @@ export default function AIMExamManager(){
         {view==='programs'&&<Programs programs={programs} setPrograms={setPrograms} questions={questions} courseTags={courseTags} showToast={showToast} showConfirm={showConfirm} settings={settings}/>}
         {view==='exam'&&<ExamBuilder programs={programs} questions={questions} setView={navTo} onBuild={(qs,name)=>{setExam(qs);setExamName(name||'');showToast(`Prüfung „${name}“ mit ${qs.length} Fragen erstellt.`,'success');setView('export');}}/>}
         {view==='export'&&<ExportView exam={exam} programName={examName} setView={navTo} showToast={showToast} showConfirm={showConfirm} onSaveAndNew={(savedName)=>{if(!exam?.length)return;const snapshot=createSavedExamSnapshot(exam,savedName||examName||'Prüfung',examName||'Prüfung');setSavedExams(prev=>[snapshot,...prev]);setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}showToast(`Prüfung „${snapshot.name}“ gespeichert. Neue Prüfung kann gestartet werden.`,'success');setView('exam');}} onUpdateExam={updater=>setExam(prev=>typeof updater==='function'?updater(prev||[]):updater)} onClear={()=>{setExam(null);setExamName('');try{window.localStorage.removeItem('aim_exam');}catch{}}}/>}
-        {view==='help'&&<HelpPage/>}
-        {view==='about'&&<AboutPage/>}
+        {view==='anleitung'&&<AnleitungPage/>}
         {view==='settings'&&<SettingsPage settings={settings} setSettings={setSettings} darkMode={darkMode} onToggleDark={v=>setDarkMode(typeof v==='boolean'?v:d=>!d)}/>}
       </div>
       <ToastContainer toasts={toasts} onRemove={id=>setToasts(prev=>prev.filter(t=>t.id!==id))}/>
