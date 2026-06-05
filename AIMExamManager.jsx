@@ -7,7 +7,11 @@ import AnleitungPage from "./src/AnleitungPage.jsx";
 // styling and primitives). The circular import (this file imports AnleitungPage,
 // AnleitungPage imports back from here) is safe because AnleitungPage only uses
 // these inside function bodies, not at module evaluation time.
-export const C={tD:'var(--c-tD)',t:'var(--c-t)',tM:'var(--c-tM)',tL:'var(--c-tL)',tP:'var(--c-tP)',wW:'var(--c-wW)',st:'var(--c-st)',tx:'var(--c-tx)',mu:'var(--c-mu)',bo:'var(--c-bo)',ac:'var(--c-ac)',wh:'var(--c-wh)',re:'var(--c-re)',rP:'var(--c-rP)',gr:'var(--c-gr)',gP:'var(--c-gP)'};
+// `inv` = inverted/dark surface (dark in BOTH themes, light text) — for the
+// sidebar, dark table headers, dark buttons, callouts and active tabs. Using
+// tD for those was the dark-mode bug: tD is the text color and inverts to near
+// white in dark mode. `wmP`/`wm` = warm chip (cream/brown) that adapts to dark.
+export const C={tD:'var(--c-tD)',t:'var(--c-t)',tM:'var(--c-tM)',tL:'var(--c-tL)',tP:'var(--c-tP)',wW:'var(--c-wW)',st:'var(--c-st)',tx:'var(--c-tx)',mu:'var(--c-mu)',bo:'var(--c-bo)',ac:'var(--c-ac)',wh:'var(--c-wh)',re:'var(--c-re)',rP:'var(--c-rP)',gr:'var(--c-gr)',gP:'var(--c-gP)',inv:'var(--c-inv)',invTx:'var(--c-invTx)',wmP:'var(--c-wmP)',wm:'var(--c-wm)'};
 const THEMES={
   light:`
     --c-tD:#111111;--c-t:#d71920;--c-tM:#f08a00;--c-tL:#f3dcc9;--c-tP:#fff5ee;
@@ -15,14 +19,16 @@ const THEMES={
     --c-ac:#f2c230;--c-wh:#ffffff;--c-re:#b42318;--c-rP:#fff1f0;--c-gr:#1d6b3e;--c-gP:#edf7ef;
     --c-sem-sel-cur:#fff0dc;--c-sem-sel-comp:#f3ede7;--c-sem-sel:#fff6f0;
     --c-sem-cur:#fff7e7;--c-sem-comp:#f5f5f2;--c-row-alt:#fcfcfb;
-    --c-grid-sub:#f2f2f0;--c-grid-border:#1f1f1f;--c-sidebar:#111111;`,
+    --c-grid-sub:#f2f2f0;--c-grid-border:#1f1f1f;--c-sidebar:#111111;
+    --c-inv:#111111;--c-invTx:#f3dcc9;--c-wmP:#FEF3E2;--c-wm:#7A4F10;`,
   dark:`
     --c-tD:#f0f0ee;--c-t:#e86068;--c-tM:#f0a030;--c-tL:#4a3028;--c-tP:#2a1a14;
     --c-wW:#18181a;--c-st:#252528;--c-tx:#e0e0de;--c-mu:#909090;--c-bo:#38383c;
     --c-ac:#f2c230;--c-wh:#222228;--c-re:#e06060;--c-rP:#2a1414;--c-gr:#5dbf7a;--c-gP:#1a2d1e;
     --c-sem-sel-cur:#2a1e0c;--c-sem-sel-comp:#201a16;--c-sem-sel:#1e1714;
     --c-sem-cur:#1e1c10;--c-sem-comp:#1e1e24;--c-row-alt:#1c1c1e;
-    --c-grid-sub:#1c1c20;--c-grid-border:#444448;--c-sidebar:#0d0d10;`
+    --c-grid-sub:#1c1c20;--c-grid-border:#444448;--c-sidebar:#0d0d10;
+    --c-inv:#26262b;--c-invTx:#f3dcc9;--c-wmP:#3a2c18;--c-wm:#e6b878;`
 };
 export const sans="'Source Sans 3',system-ui,sans-serif";
 export const serif="'Libre Baskerville',Georgia,serif";
@@ -1277,7 +1283,7 @@ function previewExcelImport(file, current, onPreview, showToast){
 // We build the .docx by hand as a STORE (uncompressed) zip of OOXML parts so
 // there is no third-party dependency.
 
-function docxEsc(s){
+export function docxEsc(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 // One <w:p> paragraph. bold=true wraps the run in <w:b/><w:bCs/>.
@@ -1305,8 +1311,8 @@ function buildDocxDocumentXml(qs){
     '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>'+
     '</w:body></w:document>';
 }
-const DOCX_CONTENT_TYPES='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
-const DOCX_RELS='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+export const DOCX_CONTENT_TYPES='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+export const DOCX_RELS='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
 
 function crc32(b){
   let crc=0xFFFFFFFF;
@@ -1321,7 +1327,7 @@ function crc32(b){
 // and Testportal both parse. Portable across the Electron renderer (TextEncoder,
 // Uint8Array). Filenames/data are ASCII+UTF-8; never spreads the large data
 // array, so it is safe for big exams.
-function zipStore(files){
+export function zipStore(files){
   const enc=new TextEncoder();
   const u16=n=>[n&0xFF,(n>>>8)&0xFF];
   const u32=n=>[n&0xFF,(n>>>8)&0xFF,(n>>>16)&0xFF,(n>>>24)&0xFF];
@@ -1414,7 +1420,7 @@ export function Btn({ch,onClick,v='primary',sm,dis,full,style:s={},autoFocus,tit
 }
 
 export function Badge({ch,color='teal',sm}){
-  const colors={teal:{bg:C.tP,tx:C.tD},warm:{bg:'#FEF3E2',tx:'#7A4F10'},gray:{bg:C.st,tx:'#4A4A48'},green:{bg:C.gP,tx:C.gr},red:{bg:C.rP,tx:C.re}};
+  const colors={teal:{bg:C.tP,tx:C.tD},warm:{bg:C.wmP,tx:C.wm},gray:{bg:C.st,tx:C.mu},green:{bg:C.gP,tx:C.gr},red:{bg:C.rP,tx:C.re}};
   const co=colors[color]||colors.teal;
   return<span style={{background:co.bg,color:co.tx,fontSize:sm?'10px':'11px',fontWeight:500,padding:sm?'2px 7px':'3px 10px',borderRadius:20,whiteSpace:'nowrap'}}>{ch}</span>;
 }
@@ -1522,7 +1528,7 @@ function ExcelImportPreviewModal({preview,onCancel,onApply}){
             </ul>
           </div>
         )}
-        <div style={{background:'#FEF3E2',border:'1px solid #E8C794',borderRadius:6,padding:'10px 12px',marginBottom:16,fontSize:'12px',color:'#7A4F10'}}>
+        <div style={{background:C.wmP,border:`1px solid ${C.tL}`,borderRadius:6,padding:'10px 12px',marginBottom:16,fontSize:'12px',color:C.wm}}>
           <strong>Hinweis:</strong> Zeilen, die in der Excel-Datei FEHLEN, werden NICHT gelöscht. Lösche Einträge bei Bedarf direkt in der App.
         </div>
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
@@ -1600,7 +1606,7 @@ function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMo
     {k:'settings',icon:'⚙',label:'Einstellungen'},
   ];
   return(
-    <div style={{width:collapsed?56:226,background:C.tD,display:'flex',flexDirection:'column',flexShrink:0,transition:'width 0.2s ease',overflow:'hidden'}}>
+    <div style={{width:collapsed?56:226,background:C.inv,display:'flex',flexDirection:'column',flexShrink:0,transition:'width 0.2s ease',overflow:'hidden'}}>
       <div style={{padding:collapsed?'14px 0':'14px 16px',borderBottom:`1px solid rgba(255,255,255,0.1)`,display:'flex',alignItems:'center',justifyContent:collapsed?'center':'space-between',gap:8,minHeight:60,boxSizing:'border-box'}}>
         <div style={{display:'flex',alignItems:'center',gap:collapsed?0:10,overflow:'hidden'}}>
           <AimLogo size={collapsed?28:30}/>
@@ -1617,7 +1623,7 @@ function Sidebar({view,setView,qCount,pCount,examCount,collapsed,onToggle,darkMo
         {nav.map(n=>{
           const active=view===n.k;
           return(
-            <button data-nav={n.k} key={n.k} onClick={()=>setView(n.k)} title={collapsed?n.label:undefined} aria-label={n.label} style={{width:'100%',display:'flex',alignItems:'center',gap:collapsed?0:10,padding:collapsed?'12px 0':'10px 16px',justifyContent:collapsed?'center':'flex-start',background:active?'rgba(255,255,255,0.08)':'transparent',color:active?C.wh:'#cfcfcf',border:'none',borderLeft:active?`3px solid ${C.ac}`:'3px solid transparent',cursor:'pointer',fontFamily:sans,fontSize:'13px',fontWeight:active?600:400,textAlign:'left'}}>
+            <button data-nav={n.k} key={n.k} onClick={()=>setView(n.k)} title={collapsed?n.label:undefined} aria-label={n.label} style={{width:'100%',display:'flex',alignItems:'center',gap:collapsed?0:10,padding:collapsed?'12px 0':'10px 16px',justifyContent:collapsed?'center':'flex-start',background:active?'rgba(255,255,255,0.08)':'transparent',color:active?'#ffffff':'#cfcfcf',border:'none',borderLeft:active?`3px solid ${C.ac}`:'3px solid transparent',cursor:'pointer',fontFamily:sans,fontSize:'13px',fontWeight:active?600:400,textAlign:'left'}}>
               <span style={{fontSize:'14px',width:collapsed?undefined:16,textAlign:'center'}}>{n.icon}</span>
               {!collapsed&&<span style={{flex:1}}>{n.label}</span>}
               {!collapsed&&n.badge!=null&&<span style={{background:'rgba(255,255,255,0.18)',color:C.wh,fontSize:'11px',borderRadius:10,padding:'1px 7px',minWidth:18,textAlign:'center'}}>{n.badge}</span>}
@@ -1754,7 +1760,7 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
       const migrated=migrateCourseTagsFromMatrix(data.questions,normalizePrograms(data.programs));
       setCourseTags(migrated);
     }
-    showToast(`Backup wiederhergestellt: ${data.questions.length} Fragen, ${data.programs.length} Programme, ${(data.savedExams||[]).length} gespeicherte Prüfungen.`,'success');
+    showToast(`Backup wiederhergestellt: ${data.questions.length} Fragen, ${data.programs.length} Weiterbildungsgänge, ${(data.savedExams||[]).length} gespeicherte Prüfungen.`,'success');
   };
   const restoreBackup=e=>{
     const file=e.target.files[0];
@@ -1823,9 +1829,9 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:24}}>
         {[
           {label:'Fragen gesamt',val:questions.length,bg:C.tP,tx:C.tD},
-          {label:'Kurse',val:courses.length,bg:'#FEF3E2',tx:'#7A4F10'},
-          {label:'Weiterbildungsgänge',val:programs.length,bg:C.st,tx:'#4A4A48'},
-          {label:'Gespeicherte Prüfungen',val:savedExams.length,bg:savedExams.length?C.gP:C.st,tx:savedExams.length?C.gr:'#4A4A48'},
+          {label:'Kurse',val:courses.length,bg:C.wmP,tx:C.wm},
+          {label:'Weiterbildungsgänge',val:programs.length,bg:C.st,tx:C.mu},
+          {label:'Gespeicherte Prüfungen',val:savedExams.length,bg:savedExams.length?C.gP:C.st,tx:savedExams.length?C.gr:C.mu},
         ].map(s=>(
           <div key={s.label} style={{background:s.bg,borderRadius:8,padding:'14px 16px'}}>
             <div style={{fontSize:'11px',color:s.tx,opacity:.7,marginBottom:4,fontWeight:500}}>{s.label}</div>
@@ -1871,13 +1877,13 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
         </div>
         <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,padding:16,marginTop:16}}>
           <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>Datensicherung</div>
-          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Alle Daten werden automatisch im Browser gespeichert. Für die Weitergabe oder Neuübernahme einer Datenversion empfiehlt sich der Export. Backups enthalten jetzt auch die <strong>gespeicherten Prüfungen</strong>.</p>
+          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Alle Daten werden automatisch auf diesem Computer gespeichert. Zum Weitergeben oder als Sicherheitskopie eignet sich der Export. Backups enthalten auch die <strong>gespeicherten Prüfungen</strong>.</p>
           <input ref={restoreRef} type="file" accept=".json" style={{display:'none'}} onChange={restoreBackup}/>
           <input ref={excelImportRef} type="file" accept=".xlsx" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];e.target.value='';requestExcelImport(f);}}/>
           <div style={{marginBottom:12}}>
             <div style={{fontSize:'11px',color:C.mu,marginBottom:6,fontWeight:500}}>JSON (vollständiges Backup)</div>
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              <Btn ch="💾 Jetzt sichern" onClick={()=>{try{window.localStorage.setItem('aim_q',JSON.stringify(questions));window.localStorage.setItem('aim_p',JSON.stringify(programs));window.localStorage.setItem('aim_saved_exams',JSON.stringify(savedExams));if(exam){window.localStorage.setItem('aim_exam',JSON.stringify({exam,name:examName||''}));}showToast('Daten im Browser gespeichert.','success');}catch{showToast('Speichern fehlgeschlagen.','error');}}} v="secondary"/>
+              <Btn ch="💾 Jetzt sichern" onClick={()=>{try{window.localStorage.setItem('aim_q',JSON.stringify(questions));window.localStorage.setItem('aim_p',JSON.stringify(programs));window.localStorage.setItem('aim_saved_exams',JSON.stringify(savedExams));if(exam){window.localStorage.setItem('aim_exam',JSON.stringify({exam,name:examName||''}));}showToast('Daten gespeichert.','success');}catch{showToast('Speichern fehlgeschlagen.','error');}}} v="secondary"/>
               <Btn ch="↑ JSON laden" onClick={()=>restoreRef.current?.click()} v="ghost"/>
               <Btn ch="↓ JSON exportieren" onClick={exportBackup} v="ghost"/>
             </div>
@@ -1928,9 +1934,9 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
           )}
         </div>
         <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,padding:16,marginTop:16}}>
-          <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>Sitzung</div>
-          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Schliesst die App im Browser. Der lokale Server läuft weiter bis du ihn im Terminal mit <code style={{background:C.st,padding:'1px 5px',borderRadius:3,fontSize:'12px'}}>Ctrl+C</code> beendest.</p>
-          <Btn ch="⏻ App schliessen" onClick={()=>showConfirm({message:'Möchtest du die App wirklich schliessen? Alle Daten sind gespeichert. Du kannst die App jederzeit über den Start-Link wieder öffnen.',confirmLabel:'App schliessen',confirmV:'danger',onConfirm:()=>window.close()})} v="ghost"/>
+          <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>App schliessen</div>
+          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Schliesst das Programm. Alle Daten bleiben gespeichert und sind beim nächsten Start wieder da.</p>
+          <Btn ch="⏻ App schliessen" onClick={()=>showConfirm({message:'App wirklich schliessen? Alle Daten sind gespeichert und beim nächsten Öffnen wieder da.',confirmLabel:'App schliessen',confirmV:'danger',onConfirm:()=>window.close()})} v="ghost"/>
         </div>
       </div>
     </div>
@@ -2230,7 +2236,7 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
             <option value={50}>50 pro Seite</option>
             <option value="all">Alle Fragen</option>
           </select>
-          {(search||filterCourse||filterFmt||filterLecturer||filterProgram)&&<Btn ch="✕ Reset" onClick={()=>{setSearch('');setFilterCourse('');setFilterFmt('');setFilterLecturer('');setFilterProgram('');setPage(0);}} v="ghost" sm/>}
+          {(search||filterCourse||filterFmt||filterLecturer||filterProgram)&&<Btn ch="✕ Zurücksetzen" onClick={()=>{setSearch('');setFilterCourse('');setFilterFmt('');setFilterLecturer('');setFilterProgram('');setPage(0);}} v="ghost" sm/>}
           <span style={{fontSize:'12px',color:'var(--c-mu)',alignSelf:'center',marginLeft:'auto'}}>{filtered.length} Treffer</span>
         </div>
       )}
@@ -2238,7 +2244,7 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
       <div style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:8,overflow:'hidden'}}>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
           <thead>
-            <tr style={{background:'#111111'}}>
+            <tr style={{background:C.inv}}>
               {['#','Kurs','Dozent/in','Weiterbildungsgänge','Format','Frage','Antwort',...(editMode?['']:[''])].map(h=>(
                 <th key={h} style={{padding:'9px 12px',textAlign:'left',fontSize:'11px',fontWeight:500,color:'#f3dcc9',letterSpacing:'0.5px',whiteSpace:'nowrap'}}>{h}</th>
               ))}
@@ -2584,7 +2590,7 @@ function SemesterMatrix({programs,questions,courseTags={},mode='manage',onProgra
               })
             )).flat()}
             {programs.length===0&&(
-              <tr><td colSpan={2+SEMESTER_COUNT*3} style={{padding:40,textAlign:'center',fontSize:13,color:'var(--c-mu)'}}>{mode==='manage'?<span>Noch keine Weiterbildungsgänge — klicke <strong>+ Neuer WBG</strong> um einen zu erstellen.</span>:'Kein Weiterbildungsgang ausgewählt.'}</td></tr>
+              <tr><td colSpan={2+SEMESTER_COUNT*3} style={{padding:40,textAlign:'center',fontSize:13,color:'var(--c-mu)'}}>{mode==='manage'?<span>Noch keine Weiterbildungsgänge — klicke <strong>+ Neuer Weiterbildungsgang</strong> um einen zu erstellen.</span>:'Kein Weiterbildungsgang ausgewählt.'}</td></tr>
             )}
           </tbody>
         </table>
@@ -2653,7 +2659,7 @@ export function KursUebersicht({questions,programs,courseTags,setCourseTags,show
     <div style={{padding:28}}>
       <SectionHeader title="Kurs Übersicht" sub={`${courseInfo.length} Kurse in der Datenbank${totalUntagged?` · ${totalUntagged} ohne Weiterbildungsgang-Zuordnung`:''}`}/>
       <div style={{background:C.tP,border:`1px solid ${C.tL}`,borderRadius:8,padding:'12px 16px',marginBottom:16,fontSize:13,color:C.tD,lineHeight:1.55}}>
-        Auf dieser Seite verwaltest du, welche Weiterbildungsgänge welche Kurse haben. Aktivierst du hier ein Häkchen, gilt das automatisch für <strong>alle Fragen</strong> dieses Kurses. Neue Kurse entstehen, indem du in der <strong>Fragen Datenbank</strong> eine Frage mit einem neuen Kursnamen anlegst.
+        Hier legst du fest, zu welchen Weiterbildungsgängen ein Kurs gehört. Setzt du ein Häkchen, gilt das automatisch für <strong>alle Fragen</strong> dieses Kurses. Neue Kurse entstehen, indem du in der <strong>Fragen Datenbank</strong> eine Frage mit einem neuen Kursnamen anlegst.
       </div>
       <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
         <input style={{...inp,width:280}} placeholder="Kurs suchen…" value={search} onChange={e=>setSearch(e.target.value)}/>
@@ -2661,15 +2667,15 @@ export function KursUebersicht({questions,programs,courseTags,setCourseTags,show
           <option value="">Alle Weiterbildungsgänge</option>
           {programs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        {(search||filterProgram)&&<Btn ch="✕ Reset" onClick={()=>{setSearch('');setFilterProgram('');}} v="ghost" sm/>}
+        {(search||filterProgram)&&<Btn ch="✕ Zurücksetzen" onClick={()=>{setSearch('');setFilterProgram('');}} v="ghost" sm/>}
         <span style={{fontSize:12,color:C.mu,marginLeft:'auto'}}>{filtered.length} Treffer</span>
       </div>
       <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,overflow:'hidden'}}>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
           <thead>
-            <tr style={{background:C.tD}}>
+            <tr style={{background:C.inv}}>
               {['Kursname','Dozent/in','Jahr','Fragen','Weiterbildungsgänge','Aktionen'].map(h=>(
-                <th key={h} style={{padding:'10px 12px',textAlign:'left',fontSize:11,fontWeight:500,color:C.tL,letterSpacing:'0.5px',whiteSpace:'nowrap'}}>{h}</th>
+                <th key={h} style={{padding:'10px 12px',textAlign:'left',fontSize:11,fontWeight:500,color:C.invTx,letterSpacing:'0.5px',whiteSpace:'nowrap'}}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -2790,7 +2796,7 @@ export function Programs({programs,setPrograms,questions,courseTags={},showToast
 
   return(
     <div style={{padding:28}}>
-      <SectionHeader title="Weiterbildungsgänge" sub={`${programs.length} Programme konfiguriert`} action={
+      <SectionHeader title="Weiterbildungsgänge" sub={`${programs.length} Weiterbildungsgänge`} action={
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           <div style={{display:'flex',gap:4,background:'var(--c-st)',borderRadius:6,padding:3}}>
             {[
@@ -2809,7 +2815,7 @@ export function Programs({programs,setPrograms,questions,courseTags={},showToast
             ))}
           </div>
           <Btn ch={locked?'🔓 Bearbeiten':'🔒 Sperren'} onClick={()=>setLocked(l=>!l)} v={locked?'secondary':'ghost'} sm/>
-          {!locked&&<Btn ch="+ Neuer WBG" onClick={()=>setAdding(true)} v="primary"/>}
+          {!locked&&<Btn ch="+ Neuer Weiterbildungsgang" onClick={()=>setAdding(true)} v="primary"/>}
         </div>
       }/>
       {adding&&(
@@ -2929,7 +2935,7 @@ export function ExamBuilder({programs,questions,onBuild,setView}){
           </div>
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-          {selectedProgram&&selectedModules.length>0&&totalQ!==40&&<span style={{background:'#FEF3E2',color:'#7A4F10',borderRadius:6,padding:'5px 10px',fontSize:'12px'}}>Standard: 40 Fragen</span>}
+          {selectedProgram&&selectedModules.length>0&&totalQ!==40&&<span style={{background:C.wmP,color:C.wm,borderRadius:6,padding:'5px 10px',fontSize:'12px'}}>Standard: 40 Fragen</span>}
           {built&&<span style={{background:C.gP,color:C.gr,borderRadius:6,padding:'5px 10px',fontSize:'12px'}}>✓ Prüfung erstellt</span>}
           {selectedProgram&&selectedModules.length===0&&<span style={{background:C.rP,color:C.re,borderRadius:6,padding:'5px 10px',fontSize:'12px'}}>Keine Module ausgewählt</span>}
         </div>
@@ -3021,9 +3027,9 @@ export function ExportView({exam,programName,setView,showToast,showConfirm,onSav
         ))}
       </div>
       <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,overflow:'hidden',marginBottom:16}}>
-        <div style={{padding:'10px 16px',background:C.tD,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <span style={{color:C.tL,fontSize:'11px',letterSpacing:'1px',textTransform:'uppercase',fontWeight:500}}>Vorschau — Testportal-Format</span>
-          <span style={{color:C.tL,fontSize:'11px'}}>{editMode?'Bearbeiten: Reihenfolge ändern oder Fragen entfernen':'Fettdruck = korrekte Antwort'}</span>
+        <div style={{padding:'10px 16px',background:C.inv,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <span style={{color:C.invTx,fontSize:'11px',letterSpacing:'1px',textTransform:'uppercase',fontWeight:500}}>Vorschau — Testportal-Format</span>
+          <span style={{color:C.invTx,fontSize:'11px'}}>{editMode?'Bearbeiten: Reihenfolge ändern oder Fragen entfernen':'Fettdruck = korrekte Antwort'}</span>
         </div>
         <div style={{padding:20,maxHeight:420,overflowY:'auto',fontFamily:'monospace',fontSize:'13px',lineHeight:1.7,color:C.tx,background:C.wW}}>
           {exam.map((q,i)=>{
@@ -3049,8 +3055,8 @@ export function ExportView({exam,programName,setView,showToast,showConfirm,onSav
           })}
         </div>
       </div>
-      <div style={{background:'#FEF3E2',border:'1px solid #F6C90E44',borderRadius:8,padding:14,fontSize:'13px',color:'#7A4F10'}}>
-        <strong>Hinweis:</strong> Die PDF-Datei lässt sich direkt im Testportal als Druckvorlage verwenden. Korrekte Antworten sind in der PDF fett markiert.
+      <div style={{background:C.wmP,border:`1px solid ${C.tL}`,borderRadius:8,padding:14,fontSize:'13px',color:C.wm}}>
+        <strong>Hinweis:</strong> Die Word-Datei (.docx) lässt sich direkt im Testportal importieren. Korrekte Antworten sind darin fett markiert.
       </div>
       {saveDraftName!==null&&(
         <div

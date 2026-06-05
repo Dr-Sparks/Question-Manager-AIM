@@ -147,9 +147,8 @@ export default class ErrorBoundary extends React.Component {
             Die App ist auf einen unerwarteten Fehler gestoßen. Deine Daten
             sind weiterhin lokal gespeichert. Bitte zuerst eine
             <strong> Notfall-Sicherung</strong> herunterladen, danach die App
-            neu laden. Die heruntergeladene Datei enthaelt alle Fragen,
-            Weiterbildungsgänge, gespeicherten Prüfungen, Hilfe-Inhalte und
-            Bilder.
+            neu laden. Die heruntergeladene Datei enthält alle Fragen,
+            Weiterbildungsgänge und gespeicherten Prüfungen.
           </p>
 
           <div

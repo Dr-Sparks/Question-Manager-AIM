@@ -73,10 +73,10 @@ export default function UpdateBanner() {
       >
         <span style={{ fontSize: 18 }} aria-hidden>↓</span>
         <span style={{ flex: 1 }}>
-          <strong>Version {info.version}</strong> ist verfuegbar.
+          <strong>Version {info.version}</strong> ist verfügbar.
         </span>
         <button type="button" style={btnGhost} onClick={dismiss}>
-          Spaeter
+          Später
         </button>
         <button type="button" style={btnPrimary} onClick={openDownload}>
           Jetzt herunterladen
@@ -116,7 +116,7 @@ export default function UpdateBanner() {
           <strong>Version {info.version}</strong> ist bereit zur Installation.
         </span>
         <button type="button" style={btnGhost} onClick={dismiss}>
-          Spaeter
+          Später
         </button>
         <button type="button" style={btnPrimary} onClick={installNow}>
           Jetzt aktualisieren
@@ -139,7 +139,7 @@ export default function UpdateBanner() {
       >
         <span style={{ fontSize: 14 }} aria-hidden>!</span>
         <span style={{ flex: 1 }}>
-          Update-Pruefung fehlgeschlagen: {error.message}
+          Aktualisierung fehlgeschlagen: {error.message}
         </span>
       </div>
     );

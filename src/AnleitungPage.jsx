@@ -12,7 +12,7 @@
 //
 // Diese Seite ersetzt die früheren Tabs "Hilfe & Anleitung" und "Über die App".
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import {
   C,
@@ -25,6 +25,11 @@ import {
   ExamBuilder,
   ExportView,
   SettingsPage,
+  // .docx export primitives (reused to build the printable Anleitung document)
+  docxEsc,
+  DOCX_CONTENT_TYPES,
+  DOCX_RELS,
+  zipStore,
 } from "../AIMExamManager.jsx";
 
 // ─── timing + animation helpers ──────────────────────────────────────────
@@ -104,7 +109,7 @@ function Cursor({ x, y, clicked }) {
 // Small floating speech bubble that points at a specific spot. `tail` says
 // where the arrow comes from: "top-left", "top-right", etc.
 function Callout({ x, y, tail = "top-left", children, color = "tD", visible = true }) {
-  const bg = color === "accent" ? C.ac : color === "green" ? C.gr : C.tD;
+  const bg = color === "accent" ? C.ac : color === "green" ? C.gr : C.inv;
   const fg = color === "accent" ? "#111" : "#fff";
   return (
     <div
@@ -425,7 +430,7 @@ function TourSection({ index, title, lead, stage }) {
           maxWidth: 820,
         }}
       >
-        {lead}
+        {renderRich(lead)}
       </p>
       {stage}
     </section>
@@ -1023,6 +1028,23 @@ for (const [path, url] of Object.entries(TP_MEDIA)) {
 }
 const tpVideo = (name) => TP_VIDEOS[name];
 
+// Render plain text with **bold** segments as <strong>. Used for all step
+// text so key terms/buttons stand out on screen — and so the same source
+// strings map cleanly to bold in a future paper/PDF printout.
+function renderRich(text) {
+  return String(text)
+    .split(/(\*\*[^*]+\*\*)/g)
+    .map((part, i) =>
+      /^\*\*[^*]+\*\*$/.test(part) ? (
+        <strong key={i} style={{ fontWeight: 700, color: C.tD }}>
+          {part.slice(2, -2)}
+        </strong>
+      ) : (
+        <React.Fragment key={i}>{part}</React.Fragment>
+      )
+    );
+}
+
 // Bullet list under a video: the spoken/written explanation of each click.
 function PointList({ points }) {
   return (
@@ -1040,7 +1062,7 @@ function PointList({ points }) {
               marginTop: 7,
             }}
           />
-          <span>{p}</span>
+          <span>{renderRich(p)}</span>
         </li>
       ))}
     </ul>
@@ -1068,8 +1090,15 @@ function InfoNote({ children, icon = "💡" }) {
 
 // A looping, muted, autoplaying clip (behaves like a GIF) framed like a
 // PageStage. Falls back to a clean placeholder when the file isn't present.
-function VideoStage({ name, points = [] }) {
+function VideoStage({ name, points = [], speed = 2 }) {
   const src = tpVideo(name);
+  const vref = useRef(null);
+  // Apply the chosen playback speed. playbackRate is a property (not an
+  // attribute) and can reset when a source loads, so we set it in an effect
+  // AND on loadeddata. Looping does not reset it.
+  useEffect(() => {
+    if (vref.current) vref.current.playbackRate = speed;
+  }, [speed, src]);
   // Defined inside the component: reading C at module-eval time would crash
   // because of the circular import with AIMExamManager (C isn't exported yet).
   const tpFrame = {
@@ -1084,6 +1113,7 @@ function VideoStage({ name, points = [] }) {
       {src ? (
         <div style={tpFrame}>
           <video
+            ref={vref}
             src={src}
             autoPlay
             loop
@@ -1091,6 +1121,9 @@ function VideoStage({ name, points = [] }) {
             playsInline
             preload="metadata"
             aria-hidden
+            onLoadedData={(e) => {
+              e.currentTarget.playbackRate = speed;
+            }}
             style={{ width: "100%", height: "auto", display: "block" }}
           />
         </div>
@@ -1128,7 +1161,7 @@ function VideoStage({ name, points = [] }) {
 }
 
 // A sub-section card inside a step (used for Schritt 4 & 5 sub-areas).
-function SubStep({ label, name, points }) {
+function SubStep({ label, name, points, speed }) {
   return (
     <div
       style={{
@@ -1142,7 +1175,7 @@ function SubStep({ label, name, points }) {
       <div style={{ fontFamily: serif, fontSize: 15, fontWeight: 700, color: C.tD, marginBottom: 12 }}>
         {label}
       </div>
-      <VideoStage name={name} points={points} />
+      <VideoStage name={name} points={points} speed={speed} />
     </div>
   );
 }
@@ -1152,110 +1185,126 @@ const TP_STEPS = [
   {
     title: "Bei Testportal anmelden",
     lead:
-      "Testportal läuft im Browser. Melde dich mit dem offiziellen AIM-Konto an — also demselben Konto, mit dem alle AIM-Prüfungen verwaltet werden, nicht mit einem privaten Login.",
+      "Testportal läuft im Browser und wird mit dem offiziellen **AIM-Konto** bedient — demselben Konto, mit dem alle AIM-Prüfungen verwaltet werden, nicht mit einem privaten Login.",
     video: "01-login",
     points: [
-      "Im Browser www.testportal.com öffnen.",
-      "Oben rechts auf „Sign in“ / „Anmelden“ klicken.",
-      "Mit den offiziellen AIM-Zugangsdaten anmelden.",
-      "Nach der Anmeldung landest du auf der Test-Übersicht „My tests“.",
+      "Im Browser **www.testportal.com** öffnen.",
+      "Oben rechts auf **Login** klicken.",
+      "Auf der Anmeldeseite **E-Mail** und **Passwort** des AIM-Kontos eingeben und auf **Sign in** klicken. Alternativ **Continue with Microsoft**, falls das AIM-Konto darüber läuft.",
+      "Nach der Anmeldung erscheint die Test-Übersicht **My tests** — der Ausgangspunkt für alles Weitere.",
     ],
   },
   {
     title: "Die Startseite „My tests“ verstehen",
     lead:
-      "Nach dem Login siehst du alle Tests des Kontos. Diese Übersicht ist der Ausgangspunkt für jede Prüfung — egal ob neu anlegen, bearbeiten oder auswerten.",
+      "Nach dem Login zeigt **My tests** alle Tests des Kontos als Kacheln. Von hier legst du neue Tests an, öffnest bestehende zur Bearbeitung oder rufst Resultate ab.",
     video: "02-startseite",
     points: [
-      "Jede Kachel ist ein Test mit Status: ACTIVE (läuft), ENDED (beendet) oder SETUP IN PROGRESS (in Einrichtung).",
-      "Oben rechts: „New test“ legt einen neuen Test an. „Generate questions“ wird für AIM nicht benötigt.",
-      "Mit „Category“ und „Status“ lässt sich die Liste filtern, wenn viele Tests vorhanden sind.",
+      "Jede **Kachel** ist ein Test. Das farbige Etikett zeigt den Status: **ACTIVE** (läuft gerade), **ENDED** (beendet) oder **SETUP IN PROGRESS** (noch in Einrichtung).",
+      "Oben rechts: **New test** legt einen neuen Test an. **Generate questions** (KI-Fragen) wird für AIM **nicht** benötigt.",
+      "Auf jeder Kachel: das **„…“-Menü** (umbenennen, duplizieren, löschen), der Durchschnitt **avg. score** und die Zahl der **Results**.",
+      "Links die Seitenleiste (**My tests**, **Respondents**, **Results database**), oben **Category** und **Status** zum Filtern, falls viele Tests vorhanden sind.",
       "Ein Klick auf eine Kachel öffnet den jeweiligen Test.",
     ],
   },
   {
     title: "Fragen aus dem AIM Prüfungs-Manager importieren",
     lead:
-      "Du musst keine Fragen abtippen. Lade einfach die Datei hoch, die du im AIM Prüfungs-Manager unter „Export & Download“ erzeugt hast — Testportal baut daraus den Test.",
+      "Fragen werden nicht abgetippt, sondern als Datei hochgeladen — am besten die **Word-Datei (.docx)**, die der AIM Prüfungs-Manager unter **Export & Download** erzeugt. In dieser .docx ist die **richtige Antwort fett** gespeichert, sodass Testportal sie beim Import automatisch als korrekt erkennt.",
     video: "03-import",
     points: [
-      "Auf „New test“ klicken und „Import test“ wählen.",
-      "Die im AIM Prüfungs-Manager als Word-Datei (.docx) exportierte Datei hochladen.",
-      "Wichtig: Testportal erkennt fett markierten Text automatisch als die richtige Antwort — genau so exportiert die AIM-App.",
-      "Auf „Import“ klicken. Aus der Datei entsteht ein neuer Test mit allen Fragen.",
-      "Der Test steht danach auf „Setup in progress“ und wird im nächsten Schritt eingerichtet.",
+      "Oben rechts auf **New test** klicken und **Import from file** wählen.",
+      "Im Fenster **Import test** die aus dem AIM-Manager exportierte Datei hochladen — per Klick auf das Feld oder per **Drag & Drop**. Unterstützt werden **PDF, Word (.docx) und Textdateien**; für AIM die **.docx** verwenden.",
+      "Auf **Import** klicken. Testportal liest alle Fragen ein und meldet **„Your questions are ready!“**.",
+      "Mit **Review questions** geht es weiter — der Test steht jetzt auf **SETUP IN PROGRESS** und wird als Nächstes eingerichtet.",
     ],
   },
   {
-    title: "Den Test konfigurieren",
+    title: "Den Test konfigurieren — Überblick",
     lead:
-      "Nach dem Import richtest du den Test ein: Punkte, Zeit, Bestehensgrenze und Zugang. Links findest du alle Einstellungs-Bereiche, oben den Fortschritt in Prozent. Erst wenn alles kontrolliert ist, wird der Test über „Activate test“ freigegeben.",
+      "Nach dem Import richtest du den Test ein. Links unter **Test configuration** liegen alle Einstellungs-Bereiche, oben zeigt ein Balken den Fortschritt in Prozent. Erst wenn alles geprüft ist, wird der Test unten über den grünen Knopf **Activate test** freigegeben.",
     video: "04-konfiguration",
     points: [
-      "Links: die Einstellungs-Bereiche (Basic settings, Questions manager, …).",
-      "Oben: der Fortschrittsbalken zeigt, wie vollständig der Test eingerichtet ist.",
-      "Unten links: der grüne Knopf „Activate test“ gibt den Test frei — erst nach der Kontrolle drücken.",
-      "Rechts fasst die „Configuration summary“ alle wichtigen Einstellungen für die Schlusskontrolle zusammen.",
+      "Linkes Menü **Test configuration**: Basic settings, Questions manager, Test sets, Test access, Test start page, Grading & summary, Time settings, Certificate template.",
+      "Oben rechts öffnet **Test info** die **Configuration summary** — eine Zusammenfassung aller wichtigen Einstellungen (Fragenzahl, Pass mark, Zugangsart, Zeit) für die Schlusskontrolle.",
+      "Die einzelnen Bereiche werden in den folgenden Abschnitten einzeln erklärt.",
+      "Wichtig: Nach jeder Änderung in einem Bereich unten auf **Save** klicken.",
     ],
     subSteps: [
       {
-        label: "Basic settings — Name & Beschreibung",
+        label: "Basic settings — Name & Grunddaten",
         name: "04a-basic-settings",
         points: [
-          "Einen klaren Testnamen vergeben, z. B. „AIM Prüfung – WBS 55 (2020)“.",
-          "So ist der Test später bei Resultaten und Rückfragen eindeutig zuzuordnen.",
+          "**Test name**: einen klaren, eindeutigen Namen vergeben, z. B. „AIM Prüfung – WBS 55 (2020)“. So ist der Test später bei Resultaten sofort zuzuordnen.",
+          "**Category** und **Description** sind optional und nur intern sichtbar.",
+          "**Test language** auf die gewünschte Sprache stellen.",
+          "Beim **Logo** kann das AIM-Logo hinterlegt oder das Standard-Logo genutzt werden.",
         ],
       },
       {
-        label: "Questions manager — Fragen kontrollieren",
+        label: "Questions manager — Fragen prüfen & Kategorien setzen",
         name: "04b-questions-manager",
         points: [
-          "Alle importierten Fragen durchsehen.",
-          "Bei jeder Frage muss die richtige Antwort markiert sein (sonst warnt Testportal in der Zusammenfassung).",
-          "Punktzahl pro Frage prüfen; Reihenfolge lässt sich hier ändern.",
+          "Hier stehen **alle importierten Fragen** untereinander. Bei jeder Frage ist die **richtige Antwort grün hinterlegt**, rechts steht die **Punktzahl (Points)**.",
+          "**Wichtigste Kontrolle:** Bei jeder Frage muss eine richtige Antwort markiert sein (bei Multiple Choice mehrere). Fehlt das, weist Testportal in der Zusammenfassung darauf hin.",
+          "Eine Frage anklicken öffnet den **Editor**: Fragetext, **Answer type** (z. B. Single choice) und die Antworten — die korrekte Antwort wird über den **grünen Punkt** links markiert.",
+          "**Kategorien zuordnen (wichtig!):** Nach dem Import haben alle Fragen die Standard-Kategorie **„Generic“**. Die richtigen Kategorien werden **nicht** mitimportiert und müssen pro Frage von Hand gesetzt werden.",
+          "**So geht es am schnellsten:** Die **erste Zeile jeder Frage** ist der Kursname („Titel des Kurses: …“). Diesen Kursnamen **markieren und kopieren**, dann in der Frage unter **Category** auf **Add new category** klicken und den Namen **einfügen** — so bekommt jede Frage die Kategorie ihres Kurses.",
+          "Alle angelegten Kategorien lassen sich danach über **Manage categories** ansehen und verwalten (umbenennen, löschen).",
+          "Über **Add question** lassen sich Fragen ergänzen, über **Change questions order** umsortieren.",
         ],
       },
       {
-        label: "Test sets — Varianten erzeugen",
+        label: "Test sets — Reihenfolge / Varianten",
         name: "04c-test-sets",
         points: [
-          "Mehrere Sets erstellen, damit nicht alle dieselbe Reihenfolge sehen.",
-          "„Select all“ aktiv lassen, damit wirklich alle Sets genutzt werden.",
+          "Unter **Questions order** zwei Optionen: **Fixed** (feste Reihenfolge wie im Questions manager) oder **Random questions and answers order**.",
+          "Empfehlung für Prüfungen: **Random** wählen, damit nicht alle Studierenden Fragen und Antworten in derselben Reihenfolge sehen.",
+          "Über **Configure manually** lassen sich bei Bedarf eigene Sets bauen, die Reihenfolge mischen (**Randomise questions order**) und Antworten mischen (**Mix answers**).",
+          "**Hier zahlen sich die Kategorien aus:** Wenn die Fragen im Questions manager sauber kategorisiert sind, siehst du beim manuellen Zusammenstellen alle **Kategorien** übersichtlich und kannst gezielt Sets pro Kurs/Thema bauen.",
+          "Mit **Save** speichern.",
         ],
       },
       {
-        label: "Test access — Zugang absichern",
+        label: "Test access — Zugang & Anti-Cheat",
         name: "04d-test-access",
         points: [
-          "Zugangsart festlegen (für AIM meist „Public Link“).",
-          "Anzahl Zugriffe = 2, damit Lernende nach einem technischen Unterbruch erneut einsteigen können.",
-          "Versuche = 1. Warnungen bei Browser-Wechsel aktiv lassen.",
+          "**Channel**: in der Regel **Web browser** (alternativ **Microsoft Teams**).",
+          "**Access type**: für AIM am einfachsten **Public Link** — Testportal erzeugt einen Link, den du mit **Copy link** kopierst und an die Klasse schickst.",
+          "**Attempts per respondent** auf **1** stellen (jede Person nimmt einmal teil).",
+          "**Honest Respondent Technology** ist der Anti-Cheat-Schutz: **Disable**, **Enable warnings only** oder **Enable warnings and test block** (warnt bzw. sperrt bei Tab-Wechsel). Für Prüfungen mindestens Warnungen aktivieren.",
+          "Hinweis: Wie viele Personen gleichzeitig teilnehmen dürfen, hängt vom **Konto-Tarif** ab. Zum Schluss **Save**.",
         ],
       },
       {
-        label: "Test start page — Begrüßungsseite",
+        label: "Test start page — Startseite & Namensabfrage",
         name: "04e-test-start-page",
         points: [
-          "Die Seite, die Studierende direkt vor dem Start sehen.",
-          "Kurze Begrüßung und Hinweise zum Ablauf hinterlegen.",
+          "Unter **Instructions for respondents** eine kurze Begrüßung / Hinweise zum Ablauf hinterlegen (z. B. „Willkommen …“).",
+          "Im **Test start form** festlegen, welche Daten die Studierenden vor dem Start eingeben. **First name**, **Last name** und **E-mail address** als **Pflichtfeld (mandatory)** aktivieren — nur so sind die Resultate später eindeutig einer Person zuzuordnen.",
+          "Optional unter **Consent** einen Hinweis oder eine Einverständniserklärung hinterlegen.",
+          "Über **Test start page preview** lässt sich die Seite vorab ansehen. Mit **Save** speichern.",
         ],
       },
       {
         label: "Grading & summary — Punkte & Bestehensgrenze",
         name: "04f-grading-summary",
         points: [
-          "Mit Punkten und möglichst geraden Zahlen arbeiten (keine Dezimalbewertung).",
-          "Bestehensgrenze (Pass mark) setzen, z. B. 50 %.",
-          "Richtige Antworten während des laufenden Tests NICHT anzeigen.",
+          "**Maximum possible score** zeigt die erreichbare Gesamtpunktzahl (entspricht 100 %).",
+          "**Pass mark** aktivieren und die Bestehensgrenze setzen, z. B. **Value 50–60**, **Unit %**.",
+          "Unter **Information for respondents** wählen, was die Studierenden **am Ende** sehen: **Percentage score**, **Points score**, **Pass or fail message** usw.",
+          "**Empfehlung:** **Correct answers to questions NICHT** anhaken — sonst wird der Lösungsschlüssel preisgegeben.",
+          "Optional **Inform respondent about result via email**. Mit **Save** speichern.",
         ],
       },
       {
-        label: "Time settings — Zeit & Termin",
+        label: "Time settings — Dauer & Aktivierung",
         name: "04g-time-settings",
         points: [
-          "Gesamtdauer oder Zeit pro Frage festlegen.",
-          "Aktivierungszeit und Endzeit terminieren.",
-          "Rücksprung-Option ausschalten, wenn kein Zurückblättern erlaubt sein soll.",
+          "**Test duration**: entweder **Time to complete the test** (Gesamtzeit für die ganze Prüfung, z. B. **01:00** Stunde) oder **Time limit for each test question** (Zeit pro Frage).",
+          "**Test activation**: bei **Manual test activation** startest du die Prüfung später selbst über **Activate test**; unter **Test will remain active for** legst du fest, wie lange sie offen bleibt (z. B. **1 Tag**). Alternativ **Activation in a set time period** für ein festes Zeitfenster.",
+          "Hinweis: Wer zu spät kommt, kann nach Ablauf des Fensters nicht mehr starten.",
+          "**Allow answering questions in any order / moving back / skipping**: an = freies Navigieren, aus = kein Zurückblättern. Mit **Save** speichern.",
         ],
       },
     ],
@@ -1264,77 +1313,77 @@ const TP_STEPS = [
   {
     title: "Den Test aktivieren und durchführen",
     lead:
-      "Wenn alles kontrolliert ist, aktivierst du den Test und teilst den Link mit der Klasse. Während und nach der Prüfung verfolgst du den Ablauf und sicherst die Resultate über die Bereiche unter „Test progress & results“.",
+      "Wenn alle Einstellungen geprüft sind, wird der Test scharf geschaltet und der Link an die Klasse verteilt. Während und nach der Prüfung verfolgst du alles unter **Test progress & results**.",
     video: "05-durchfuehrung",
     points: [
-      "Unten links auf „Activate test“ klicken — der Test wird scharf geschaltet.",
-      "Den Test-Link kopieren und an die richtige Klasse senden (z. B. über Microsoft Teams).",
-      "Der Link öffnet sich für Studierende erst ab der eingestellten Aktivierungszeit.",
-      "Nach der Prüfung wird der Test über „End test“ beendet.",
+      "Unten links auf **Activate test** klicken — der Status wechselt auf **ACTIVE** und Testportal meldet, dass der Test aktiviert wurde.",
+      "Unter **Test info** den **Test link** mit **Copy link** kopieren und an die richtige Klasse senden (z. B. über Microsoft Teams).",
+      "Der Link funktioniert nur im eingestellten Zeitfenster (siehe **Time settings**).",
+      "Links erscheinen jetzt die Auswertungs-Bereiche unter **Test progress & results**. Nach der Prüfung beendet **End test** den Test.",
     ],
     subSteps: [
       {
-        label: "Respondent monitoring — Teilnahme live verfolgen",
+        label: "Respondent monitoring — Live-Überblick",
         name: "05a-respondent-monitoring",
         points: [
-          "Sehen, wer gerade teilnimmt und wie weit die Person ist.",
-          "Warnungen (z. B. Browser-Wechsel) werden hier angezeigt.",
+          "Zeigt in **Echtzeit**, wer gerade teilnimmt: **Name**, **aktuelle Frage**, **aktueller Punktestand** und **Versuch**.",
+          "Über **Presentation mode** lässt sich die Ansicht z. B. für die Aufsicht groß darstellen.",
         ],
       },
       {
-        label: "Results table — Resultate herunterladen",
+        label: "Results table — Resultate & Export",
         name: "05b-results-table",
         points: [
-          "Tabelle aller Ergebnisse.",
-          "Alle Teilnehmenden markieren und die Resultate gesammelt herunterladen.",
-          "Die Spalten lassen sich auf das Nötige reduzieren.",
+          "Tabelle aller abgeschlossenen Resultate mit **Last name**, **First name**, **Score**, **End date** und **Time**.",
+          "Mit **Export results** lädst du alle Ergebnisse herunter; über **Table content** wählst du die angezeigten Spalten.",
+          "Bei Bedarf **Send certificates** / **Download certificates** für Zertifikate.",
         ],
       },
       {
-        label: "Test sheets review — einzelne Bögen ansehen",
+        label: "Test sheets review — einzelne Bögen",
         name: "05c-test-sheets-review",
         points: [
-          "Den ausgefüllten Testbogen einzelner Studierender öffnen.",
-          "Nützlich bei Rückfragen oder zur Kontrolle.",
+          "Zeigt den **vollständig ausgefüllten Testbogen** einzelner Studierender — jede Frage mit der gegebenen Antwort.",
+          "Nützlich bei Rückfragen oder zur Kontrolle. Solange niemand fertig ist, erscheint der Hinweis **„None of the respondents has completed the test yet“**.",
         ],
       },
       {
-        label: "Answers review — offene Antworten bewerten",
+        label: "Answers review — Antworten pro Frage",
         name: "05d-answers-review",
         points: [
-          "Offene (descriptive) Antworten manuell bewerten.",
-          "Bei reinen Single-/Multiple-Choice-Prüfungen meist nicht nötig.",
+          "Hier oben eine **einzelne Frage** auswählen und sehen, **wie alle Teilnehmenden** sie beantwortet haben.",
+          "Hilfreich, um offene Antworten zu bewerten oder einzelne Fragen genauer zu prüfen.",
         ],
       },
       {
         label: "Statistics — Auswertung pro Frage",
         name: "05e-statistics",
         points: [
-          "Zeigt, wie viele eine Frage richtig beantwortet haben.",
-          "Macht zu schwere oder missverständliche Fragen sichtbar.",
+          "Zeigt pro Frage den **Prozentsatz**, der die jeweilige Antwort gewählt hat.",
+          "So erkennst du auf einen Blick **zu schwere oder missverständliche Fragen**. Über **Review all** lassen sich alle Fragen durchgehen.",
         ],
       },
       {
         label: "Unused codes — nicht genutzte Zugänge",
         name: "05f-unused-codes",
         points: [
-          "Nur bei Zugang über Einzel-Codes relevant.",
-          "Zeigt, welche Codes noch nicht verwendet wurden.",
+          "Nur relevant, wenn der Zugang über **einzelne Zugangscodes** läuft (nicht beim **Public Link**).",
+          "Zeigt, welche Codes **noch nicht verwendet** wurden.",
         ],
       },
     ],
   },
   {
-    title: "Einen beendeten Test erneut starten (mit Änderungen)",
+    title: "Einen beendeten Test erneut starten",
     lead:
-      "Ein bereits beendeter Test lässt sich wiederverwenden — entweder unverändert erneut aktivieren oder als Kopie, wenn du etwas ändern willst (neue Klasse, neuer Termin, andere Fragen).",
+      "Ein Test lässt sich **mehrfach durchführen** — etwa für eine neue Klasse oder einen Nachholtermin. Jede Aktivierung wird als eigener **Durchlauf** gespeichert, sodass keine Resultate verloren gehen.",
     video: "06-test-erneut-starten",
     points: [
-      "Den beendeten Test (Status ENDED) in „My tests“ öffnen.",
-      "Unverändert wiederholen: in „Time settings“ neue Zeiten setzen und erneut „Activate test“.",
-      "Mit Änderungen: über das „…“-Menü „Copy/Duplicate“ wählen — es entsteht „… - copy“ in „Setup in progress“.",
-      "In der Kopie die Anpassungen vornehmen (Fragen, Punkte, Zeit) und dann aktivieren.",
-      "Tipp: Resultate des alten Tests vorher herunterladen, damit nichts verloren geht.",
+      "Den Test in **My tests** öffnen. Über die Konfiguration lässt er sich wieder in den Bearbeitungs-Status **SETUP IN PROGRESS** versetzen.",
+      "Bei Bedarf Anpassungen vornehmen (z. B. neues Zeitfenster unter **Time settings**, geänderte Fragen oder Punkte).",
+      "Erneut auf **Activate test** klicken — der Test ist wieder **ACTIVE** und es entsteht ein neuer Durchlauf.",
+      "Unter **Test info → Previous test dates** sind alle früheren Durchläufe einzeln aufgelistet, jeweils mit **Results** (Resultate ansehen) und **Remove** (entfernen).",
+      "Tipp: Resultate eines Durchlaufs über **Results table** herunterladen, bevor aufgeräumt wird.",
     ],
   },
 ];
@@ -1418,7 +1467,76 @@ function AimGuide() {
   );
 }
 
+// Sticky control to set the playback speed of all Testportal clips at once.
+function SpeedControl({ speed, onSelect }) {
+  const opts = [1, 1.5, 2];
+  return (
+    <div
+      style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 5,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 0 12px",
+        marginBottom: 14,
+        background: C.wW,
+        borderBottom: `1px solid ${C.bo}`,
+      }}
+    >
+      <span style={{ fontSize: 12.5, color: C.mu, fontWeight: 600 }}>Video-Geschwindigkeit</span>
+      <div
+        style={{
+          display: "inline-flex",
+          border: `1px solid ${C.bo}`,
+          borderRadius: 999,
+          overflow: "hidden",
+        }}
+      >
+        {opts.map((o) => (
+          <button
+            key={o}
+            type="button"
+            onClick={() => onSelect(o)}
+            aria-pressed={speed === o}
+            style={{
+              appearance: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "5px 15px",
+              fontFamily: sans,
+              fontSize: 13,
+              fontWeight: speed === o ? 700 : 500,
+              background: speed === o ? C.inv : "transparent",
+              color: speed === o ? "#fff" : C.tx,
+            }}
+          >
+            {o}×
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TestportalGuide() {
+  const [speed, setSpeed] = useState(() => {
+    try {
+      const v = parseFloat(window.localStorage.getItem("aim_anleitung_speed"));
+      return [1, 1.5, 2].includes(v) ? v : 2;
+    } catch {
+      return 2;
+    }
+  });
+  const selectSpeed = (v) => {
+    setSpeed(v);
+    try {
+      window.localStorage.setItem("aim_anleitung_speed", String(v));
+    } catch {
+      /* non-essential */
+    }
+  };
   return (
     <>
       <div
@@ -1429,13 +1547,16 @@ function TestportalGuide() {
           border: `1px solid ${C.bo}`,
           borderRadius: 8,
           padding: "10px 14px",
-          marginBottom: 24,
+          marginBottom: 18,
           lineHeight: 1.55,
         }}
       >
         Testportal ist die Online-Plattform, auf der die Prüfung tatsächlich durchgeführt wird. Die
-        kurzen Videos unten laufen in Schleife und zeigen für jeden Schritt, wo du klickst.
+        kurzen Videos unten laufen in Schleife und zeigen für jeden Schritt, wo du klickst. Mit der
+        Geschwindigkeit oben kannst du alle Videos langsamer oder schneller abspielen.
       </div>
+
+      <SpeedControl speed={speed} onSelect={selectSpeed} />
 
       {TP_STEPS.map((step, i) => (
         <TourSection
@@ -1445,15 +1566,15 @@ function TestportalGuide() {
           lead={step.lead}
           stage={
             <>
-              <VideoStage name={step.video} points={step.points} />
+              <VideoStage name={step.video} points={step.points} speed={speed} />
               {step.subSteps && (
                 <div style={{ marginTop: 18 }}>
                   {step.subSteps.map((sub) => (
-                    <SubStep key={sub.name} label={sub.label} name={sub.name} points={sub.points} />
+                    <SubStep key={sub.name} label={sub.label} name={sub.name} points={sub.points} speed={speed} />
                   ))}
                 </div>
               )}
-              {step.note && <InfoNote icon="ℹ️">{step.note}</InfoNote>}
+              {step.note && <InfoNote icon="ℹ️">{renderRich(step.note)}</InfoNote>}
             </>
           }
         />
@@ -1464,6 +1585,376 @@ function TestportalGuide() {
 
 // ─── main page ───────────────────────────────────────────────────────────
 
+// ─── printable Anleitung document (.docx) + on-screen reader ───────────────
+
+// Steps for the AIM Prüfungs-Manager guide, in the same shape as TP_STEPS.
+// Drives both the printable .docx and the on-screen „Dokument“ tab. The
+// interactive cursor tour above stays unchanged.
+const AIM_STEPS = [
+  {
+    title: "Dashboard — die Startseite",
+    lead:
+      "Beim Öffnen der App landest du auf dem **Dashboard**. Es zeigt auf einen Blick, wie viele Fragen, Kurse und Weiterbildungsgänge vorhanden sind, bietet Schnellzugriff auf die wichtigsten Aktionen und enthält die Datensicherung.",
+    points: [
+      "Oben die **Statistik-Karten**: Gesamtzahl der **Fragen**, **Kurse**, **Weiterbildungsgänge** und gespeicherten Prüfungen.",
+      "Über **Neue Prüfung** startet der Prüfungsbau direkt aus dem Dashboard.",
+      "Der **Schnellzugriff** führt direkt zu „Prüfung erstellen“ oder „Fragen verwalten“.",
+      "**Datensicherung**: vollständiges **JSON-Backup** oder **Excel-Export** (Fragen + Weiterbildungsgänge). Regelmäßig nutzen!",
+      "**Alle Daten löschen** leert die App — vorher wird automatisch ein Sicherungs-Snapshot erstellt, der über **Letzten Stand wiederherstellen** zurückgeholt werden kann.",
+    ],
+  },
+  {
+    title: "Fragen Datenbank — alle Fragen verwalten",
+    lead:
+      "Hier verwaltest du **alle Prüfungsfragen**. Jede Frage gehört zu einem Kurs und erscheint automatisch in allen Weiterbildungsgängen, die diesen Kurs unterrichten. Standardmäßig ist die Tabelle gesperrt, damit nichts versehentlich geändert wird.",
+    points: [
+      "Mit **✏️ Bearbeiten** die Tabelle entsperren — erst dann erscheinen **+ Neue Frage** und die Lösch-Knöpfe.",
+      "Über die **Suchleiste** nach Stichwort suchen; die **Filter** grenzen auf Kurs, Dozent/in, Weiterbildungsgang oder Format ein.",
+      "Die Spalte **Weiterbildungsgänge** zeigt als kleine Plaketten, zu welchen Gängen jede Frage passt.",
+      "Eine **Zeile pro Frage** mit Kurs, Jahr, Dozent/in, Format und der korrekten Antwort.",
+      "**Import** (JSON/CSV) und **Export** stehen im Bearbeiten-Modus bereit.",
+    ],
+  },
+  {
+    title: "Weiterbildungsgänge — Semester und Module pflegen",
+    lead:
+      "Ein **Weiterbildungsgang** ist eine Kohorte mit **6 Semestern** und je **4 Modulen**. Jedes Modul verknüpft einen Kurs mit Jahr und Dozent/in — so weiß die App, welche Fragen zu welcher Kohorte gehören.",
+    points: [
+      "Mit **🔓 Bearbeiten** die Matrix entsperren, mit **🔒 Sperren** wieder schützen.",
+      "Pro **Zeile** ein Weiterbildungsgang mit Startsemester (z. B. **HS 2024**).",
+      "Pro Semester drei Spalten: **Jahr · Dozent/in · Kursname**.",
+      "Zwischen **Standard-** und **Kompaktansicht** wechseln und die **Zoomstufe** (100–55 %) anpassen, um den ganzen Plan zu sehen.",
+      "**Auto-Füllen** verteilt die getaggten Kurse automatisch auf die Module — bereits gefüllte Module werden nie überschrieben.",
+    ],
+  },
+  {
+    title: "Prüfung erstellen — Module auswählen",
+    lead:
+      "Hier stellst du den **Fragenpool** für eine Kohorte zusammen: Weiterbildungsgang wählen, Module aktivieren — die App sammelt automatisch alle passenden Fragen.",
+    points: [
+      "In der Matrix auf einen **Weiterbildungsgang** klicken — alle seine Module werden vorausgewählt.",
+      "Die **Zusammenfassung** oben zeigt die Anzahl gewählter Module und Fragen; die Zahl wird **grün**, sobald die Standardgröße von **40 Fragen** erreicht ist.",
+      "Einzelne Module per **Häkchen** an- oder abwählen — die Fragenzahl rechnet sich live mit.",
+      "**Prüfung erstellen** baut die Prüfung und wechselt direkt zum Export.",
+    ],
+  },
+  {
+    title: "Export & Download — als Word (.docx) speichern",
+    lead:
+      "Die fertige Prüfung wird hier exportiert — im Format, das **Testportal** beim Import versteht. In der **Word-Datei (.docx)** ist die richtige Antwort **fett** gespeichert, sodass Testportal sie zuverlässig als korrekt erkennt.",
+    points: [
+      "Die **Vorschau** zeigt die Prüfung im Testportal-Format; korrekte Antworten sind grün markiert.",
+      "**↓ Word (.docx)** lädt die Prüfung als Word-Datei herunter — genau diese Datei wird in Testportal importiert.",
+      "**↓ TXT** und **Kopieren** stehen als Alternativen bereit.",
+      "Mit **💾 Speichern & neu** wird die Prüfung dauerhaft gesichert und sofort eine neue gestartet.",
+    ],
+  },
+  {
+    title: "Einstellungen — Standardverhalten anpassen",
+    lead: "Hier legst du fest, wie sich die App standardmäßig verhält.",
+    points: [
+      "**Weiterbildungsgänge beim Start gesperrt** — schützt die Matrix vor versehentlichen Änderungen.",
+      "**Standard-Zoomstufe** der Semester-Matrix (hilfreich auf kleinen Bildschirmen).",
+      "**Dunkelmodus** ein- und ausschalten (auch über das Sonne/Mond-Symbol in der Seitenleiste).",
+    ],
+  },
+];
+
+// Split „text with **bold**“ into runs [{ text, bold }] for both the .docx
+// (bold run property) and the on-screen renderer.
+function splitBoldRuns(text) {
+  return String(text)
+    .split(/(\*\*[^*]+\*\*)/g)
+    .filter((p) => p !== "")
+    .map((p) =>
+      /^\*\*[^*]+\*\*$/.test(p) ? { text: p.slice(2, -2), bold: true } : { text: p, bold: false }
+    );
+}
+
+// ── OOXML helpers, built on the exported docxEsc / zipStore primitives ──
+const DX_FONT = 'w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"';
+function dxRun(text, opts = {}) {
+  const { bold = false, italic = false, sz = 22, color = "000000" } = opts;
+  const rpr =
+    "<w:rPr>" +
+    `<w:rFonts ${DX_FONT}/>` +
+    (bold ? "<w:b/><w:bCs/>" : "") +
+    (italic ? "<w:i/><w:iCs/>" : "") +
+    `<w:color w:val="${color}"/>` +
+    `<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/>` +
+    "</w:rPr>";
+  return `<w:r>${rpr}<w:t xml:space="preserve">${docxEsc(text)}</w:t></w:r>`;
+}
+function dxPara(runs, opts = {}) {
+  const { sz = 22, before = 0, after = 120, ind = 0, hanging = 0, align } = opts;
+  const list = Array.isArray(runs) ? runs : [{ text: runs }];
+  const body = list
+    .map((r) => dxRun(r.text, { bold: r.bold, italic: r.italic, sz: r.sz || sz, color: r.color }))
+    .join("");
+  const indXml = ind || hanging ? `<w:ind w:left="${ind}"${hanging ? ` w:hanging="${hanging}"` : ""}/>` : "";
+  const alignXml = align ? `<w:jc w:val="${align}"/>` : "";
+  return `<w:p><w:pPr><w:spacing w:before="${before}" w:after="${after}"/>${indXml}${alignXml}</w:pPr>${body}</w:p>`;
+}
+function dxHeading(text, opts = {}) {
+  const { sz = 30, color = "111111", before = 240, after = 100, align } = opts;
+  return dxPara([{ text, bold: true, sz, color }], { sz, before, after, align });
+}
+function dxBullet(text) {
+  return dxPara([{ text: "•   " }, ...splitBoldRuns(text)], { after: 80, ind: 360, hanging: 360 });
+}
+const DX_PAGE_BREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+
+function buildAnleitungDocumentXml(dateStr) {
+  const p = [];
+  // Title page
+  p.push(dxPara([], { after: 2600 }));
+  p.push(dxHeading("AIM Prüfungs-Manager", { sz: 52, align: "center", after: 120 }));
+  p.push(dxHeading("& Testportal", { sz: 40, color: "b81620", align: "center", after: 360 }));
+  p.push(dxPara([{ text: "Anleitung — Schritt für Schritt", sz: 28, color: "555555" }], { align: "center", after: 140 }));
+  p.push(
+    dxPara(
+      [{ text: "So bereitest du eine Prüfung im AIM Prüfungs-Manager vor und führst sie im Testportal durch.", sz: 22, color: "555555" }],
+      { align: "center", after: 140 }
+    )
+  );
+  if (dateStr) p.push(dxPara([{ text: "Stand: " + dateStr, sz: 20, color: "888888" }], { align: "center" }));
+  p.push(DX_PAGE_BREAK);
+  // Inhaltsverzeichnis
+  p.push(dxHeading("Inhaltsverzeichnis", { sz: 34, after: 200 }));
+  p.push(dxPara([{ text: "Teil 1 — AIM Prüfungs-Manager", bold: true, sz: 24 }], { after: 60 }));
+  AIM_STEPS.forEach((s, i) => p.push(dxPara([{ text: `${i + 1}.  ${s.title}` }], { ind: 360, after: 40 })));
+  p.push(dxPara([{ text: "Teil 2 — Testportal", bold: true, sz: 24 }], { before: 180, after: 60 }));
+  TP_STEPS.forEach((s, i) => p.push(dxPara([{ text: `${i + 1}.  ${s.title}` }], { ind: 360, after: 40 })));
+  p.push(DX_PAGE_BREAK);
+  // Teil 1 — AIM
+  p.push(dxHeading("Teil 1 — AIM Prüfungs-Manager", { sz: 36, color: "b81620", after: 200 }));
+  AIM_STEPS.forEach((s, i) => {
+    p.push(dxHeading(`Schritt ${i + 1}: ${s.title}`, { sz: 27, before: 260 }));
+    p.push(dxPara(splitBoldRuns(s.lead), { after: 100 }));
+    s.points.forEach((pt) => p.push(dxBullet(pt)));
+  });
+  p.push(DX_PAGE_BREAK);
+  // Teil 2 — Testportal
+  p.push(dxHeading("Teil 2 — Testportal", { sz: 36, color: "b81620", after: 200 }));
+  TP_STEPS.forEach((s, i) => {
+    p.push(dxHeading(`Schritt ${i + 1}: ${s.title}`, { sz: 27, before: 260 }));
+    p.push(dxPara(splitBoldRuns(s.lead), { after: 100 }));
+    s.points.forEach((pt) => p.push(dxBullet(pt)));
+    (s.subSteps || []).forEach((sub) => {
+      p.push(dxHeading(sub.label, { sz: 23, color: "333333", before: 180, after: 60 }));
+      sub.points.forEach((pt) => p.push(dxBullet(pt)));
+    });
+    if (s.note) p.push(dxPara([{ text: "Hinweis: ", bold: true }, ...splitBoldRuns(s.note)], { before: 120, after: 140 }));
+  });
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+    p.join("") +
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>' +
+    "</w:body></w:document>"
+  );
+}
+
+function buildAnleitungDocx(dateStr) {
+  return zipStore([
+    { name: "[Content_Types].xml", data: DOCX_CONTENT_TYPES },
+    { name: "_rels/.rels", data: DOCX_RELS },
+    { name: "word/document.xml", data: buildAnleitungDocumentXml(dateStr) },
+  ]);
+}
+
+function downloadBytes(bytes, filename, mime) {
+  try {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch {
+    /* download not available */
+  }
+}
+
+// ── on-screen renderers (read the same AIM_STEPS / TP_STEPS) ──
+function DocList({ points }) {
+  return (
+    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 }}>
+      {points.map((pt, i) => (
+        <li key={i} style={{ display: "flex", gap: 9, fontSize: 13.5, color: C.tx, lineHeight: 1.55 }}>
+          <span aria-hidden style={{ flexShrink: 0, width: 5, height: 5, borderRadius: "50%", background: C.t, marginTop: 7 }} />
+          <span>{renderRich(pt)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+function DocStepBlock({ index, step, idPrefix }) {
+  return (
+    <section id={`${idPrefix}-${index}`} style={{ marginBottom: 24 }}>
+      <h3 style={{ fontFamily: serif, fontSize: 16.5, color: C.tD, margin: "0 0 6px", fontWeight: 700 }}>
+        Schritt {index}: {step.title}
+      </h3>
+      <p style={{ fontSize: 13.5, color: C.tx, lineHeight: 1.6, margin: "0 0 8px" }}>{renderRich(step.lead)}</p>
+      <DocList points={step.points} />
+      {(step.subSteps || []).map((sub) => (
+        <div key={sub.name} style={{ marginTop: 12, paddingLeft: 14, borderLeft: `2px solid ${C.tL}` }}>
+          <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 700, color: C.tD, margin: "0 0 5px" }}>{sub.label}</div>
+          <DocList points={sub.points} />
+        </div>
+      ))}
+      {step.note && (
+        <p
+          style={{
+            fontSize: 13,
+            color: C.tD,
+            lineHeight: 1.55,
+            margin: "10px 0 0",
+            background: C.tP,
+            border: `1px solid ${C.tL}`,
+            borderRadius: 6,
+            padding: "8px 12px",
+          }}
+        >
+          <strong>Hinweis: </strong>
+          {renderRich(step.note)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function DocumentView() {
+  const download = () => {
+    let dateStr = "";
+    try {
+      dateStr = new Date().toLocaleDateString("de-DE", { year: "numeric", month: "long", day: "numeric" });
+    } catch {
+      /* keep empty */
+    }
+    downloadBytes(
+      buildAnleitungDocx(dateStr),
+      "AIM_Anleitung.docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+  };
+  const jump = (id) => {
+    try {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch {
+      /* ignore */
+    }
+  };
+  const TocLink = ({ label, id }) => (
+    <button
+      type="button"
+      onClick={() => jump(id)}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        appearance: "none",
+        background: "transparent",
+        border: "none",
+        cursor: "pointer",
+        padding: "3px 0",
+        fontFamily: sans,
+        fontSize: 13.5,
+        color: C.t,
+      }}
+    >
+      {label}
+    </button>
+  );
+  const tocHead = {
+    fontSize: 11,
+    fontWeight: 700,
+    color: C.mu,
+    textTransform: "uppercase",
+    letterSpacing: "1px",
+    margin: "10px 0 2px",
+  };
+  const partHead = { fontFamily: serif, fontSize: 19, color: C.t, fontWeight: 700 };
+  return (
+    <>
+      {/* toolbar with the download button */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 5,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          padding: "10px 0 12px",
+          marginBottom: 16,
+          background: C.wW,
+          borderBottom: `1px solid ${C.bo}`,
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ fontSize: 13, color: C.mu, lineHeight: 1.5 }}>
+          Die komplette Anleitung als sauberes Dokument — auch ohne Videos verständlich.
+        </span>
+        <button
+          type="button"
+          onClick={download}
+          style={{
+            appearance: "none",
+            border: "none",
+            cursor: "pointer",
+            background: C.inv,
+            color: "#fff",
+            borderRadius: 8,
+            padding: "9px 16px",
+            fontFamily: sans,
+            fontSize: 13.5,
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+          }}
+        >
+          ↓ Als Word (.docx) herunterladen
+        </button>
+      </div>
+
+      {/* the document, laid out like clean printable paper */}
+      <div style={{ background: C.wh, border: `1px solid ${C.bo}`, borderRadius: 10, padding: "28px 30px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+        <h1 style={{ fontFamily: serif, fontSize: 24, color: C.tD, margin: "0 0 4px", fontWeight: 700 }}>
+          AIM Prüfungs-Manager &amp; Testportal
+        </h1>
+        <div style={{ fontSize: 13, color: C.mu, marginBottom: 22 }}>Anleitung — Schritt für Schritt</div>
+
+        {/* Inhaltsverzeichnis */}
+        <div style={{ background: C.wW, border: `1px solid ${C.bo}`, borderRadius: 8, padding: "14px 16px", marginBottom: 28 }}>
+          <div style={{ fontFamily: serif, fontSize: 15, fontWeight: 700, color: C.tD, marginBottom: 6 }}>Inhaltsverzeichnis</div>
+          <div style={tocHead}>Teil 1 — AIM Prüfungs-Manager</div>
+          {AIM_STEPS.map((s, i) => (
+            <TocLink key={i} label={`${i + 1}.  ${s.title}`} id={`aim-${i + 1}`} />
+          ))}
+          <div style={tocHead}>Teil 2 — Testportal</div>
+          {TP_STEPS.map((s, i) => (
+            <TocLink key={i} label={`${i + 1}.  ${s.title}`} id={`tp-${i + 1}`} />
+          ))}
+        </div>
+
+        <h2 style={{ ...partHead, margin: "0 0 14px" }}>Teil 1 — AIM Prüfungs-Manager</h2>
+        {AIM_STEPS.map((s, i) => (
+          <DocStepBlock key={i} index={i + 1} step={s} idPrefix="aim" />
+        ))}
+
+        <h2 style={{ ...partHead, margin: "28px 0 14px" }}>Teil 2 — Testportal</h2>
+        {TP_STEPS.map((s, i) => (
+          <DocStepBlock key={i} index={i + 1} step={s} idPrefix="tp" />
+        ))}
+      </div>
+    </>
+  );
+}
+
+
 function TabButton({ active, onClick, children }) {
   return (
     <button
@@ -1472,9 +1963,9 @@ function TabButton({ active, onClick, children }) {
       aria-pressed={active}
       style={{
         appearance: "none",
-        background: active ? C.tD : "transparent",
+        background: active ? C.inv : "transparent",
         color: active ? "#fff" : C.tx,
-        border: `1px solid ${active ? C.tD : C.bo}`,
+        border: `1px solid ${active ? C.inv : C.bo}`,
         borderRadius: 999,
         padding: "8px 18px",
         fontFamily: sans,
@@ -1594,9 +2085,14 @@ export default function AnleitungPage() {
           <TabButton active={tab === "testportal"} onClick={() => selectTab("testportal")}>
             Testportal
           </TabButton>
+          <TabButton active={tab === "dokument"} onClick={() => selectTab("dokument")}>
+            Dokument
+          </TabButton>
         </div>
 
-        {tab === "aim" ? <AimGuide /> : <TestportalGuide />}
+        {tab === "aim" && <AimGuide />}
+        {tab === "testportal" && <TestportalGuide />}
+        {tab === "dokument" && <DocumentView />}
 
         {/* Footer: Über die App */}
         <h2

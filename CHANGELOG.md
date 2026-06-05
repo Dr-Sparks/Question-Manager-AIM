@@ -4,6 +4,56 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.18] — 2026-06-05
+
+### Hinzugefügt
+- **Testportal-Videos in der Anleitung.** Der Testportal-Bereich zeigt jetzt für
+  jeden Schritt ein kurzes, in Schleife laufendes Video (18 Clips, inkl. der
+  Unterbereiche der Test-Konfiguration und der Auswertung).
+- **Video-Geschwindigkeit 1× / 1.5× / 2×** (Standard **2×**, wird gemerkt) — gilt
+  für alle Videos gleichzeitig.
+- **Neuer Reiter „Dokument“** in der Anleitung: die komplette Anleitung (AIM
+  Prüfungs-Manager **und** Testportal) als sauberes, lesbares Dokument mit
+  Titel, Inhaltsverzeichnis und anklickbaren Sprungmarken — auch ohne Videos
+  verständlich.
+- **„Als Word (.docx) herunterladen“** erzeugt aus genau diesem Inhalt ein
+  einzelnes Word-Dokument mit **Titelseite + Inhaltsverzeichnis + beiden Teilen**
+  (für eine Papier-/PDF-Fassung). Nutzt die vorhandene .docx-Engine, keine
+  zusätzliche Abhängigkeit.
+
+### Geändert
+- Die Testportal-Schritttexte wurden anhand der echten Videos **ausführlich und
+  eigenständig** neu geschrieben (mit Fettungen der wichtigsten Begriffe), u. a.
+  mit dem Hinweis, dass importierte Fragen zunächst die Kategorie „Generic“
+  haben und die Kategorien (Kursnamen) im **Questions manager** von Hand gesetzt
+  werden müssen — wichtig für saubere **Test sets**.
+
+### Behoben
+- **Dunkelmodus überarbeitet.** Im Dunkelmodus erschienen Seitenleiste,
+  Tabellen-Kopfzeilen, die Export-Vorschau und einzelne Schaltflächen/Reiter
+  fälschlich hell (mit unlesbarem Text). Diese Flächen nutzen jetzt eine eigene
+  dunkle Farbe und bleiben in beiden Designs korrekt. Auch die hellen
+  „Kachel“-Farben (Kurse-Statistik, Start-Semester, Hinweis-Boxen) passen sich
+  nun dem Dunkelmodus an.
+
+### Texte / Verständlichkeit
+- UI-Texte vereinfacht und entwickler-/„web“-lastige Formulierungen entfernt:
+  „im Browser gespeichert“ → „auf diesem Computer gespeichert“; die frühere
+  „Sitzung“-Karte (lokaler Server / Terminal / Ctrl+C) → klare „App schliessen“-
+  Erklärung; „Auf dieser Seite …“ → „Hier …“.
+- Einheitliche deutsche Begriffe und Umlaute: „✕ Reset“ → „✕ Zurücksetzen“,
+  „+ Neuer WBG“ → „+ Neuer Weiterbildungsgang“, „Programme“ →
+  „Weiterbildungsgänge“; fehlende Umlaute im Update-Banner und Fehler-Bildschirm
+  korrigiert („verfügbar“, „Später“, „enthält“).
+- Veralteter Export-Hinweis („PDF-Datei“) auf die Word-Datei (.docx) korrigiert.
+
+### Technisch
+- Anleitungs-Videos werden als MP4 über `import.meta.glob` gebündelt (1280 px /
+  24 fps / H.264, ~13 MB für alle 18 Clips). Drop-in-Ordner
+  `src/anleitung-media/testportal/` (Dateinamen siehe README dort).
+- `.docx`-Primitive (`docxEsc`, `DOCX_CONTENT_TYPES`, `DOCX_RELS`, `zipStore`)
+  aus `AIMExamManager.jsx` exportiert und für die Anleitung wiederverwendet.
+
 ## [1.0.17] — 2026-06-05
 
 ### Geändert
