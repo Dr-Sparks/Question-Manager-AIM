@@ -114,18 +114,17 @@ Das bedeutet:
 In der App gibt es im Dashboard den Bereich `Datensicherung`.
 
 Dort kann man:
-- `💾 Jetzt sichern`
-- `↑ JSON laden`
-- `↓ JSON exportieren`
-- `↓ Excel exportieren`
-- `↑ Excel importieren`
+- `💾 Jetzt sichern` — speichert die Daten sofort auf dem Computer
+- `↓ Excel exportieren` — sichert alle Daten als Excel-Datei (zum Aufbewahren oder Weitergeben)
+- `↑ Excel importieren` — lädt eine zuvor exportierte Excel-Datei zurück (mit Vorschau)
 
-Die Backups enthalten:
+Die Sicherung als Excel-Datei (mehrere Tabellenblätter) enthält:
 - Fragen
 - Weiterbildungsgänge
 - Semesteransicht
 - gespeicherte Prüfungen
-- aktuelle offene Prüfung
+
+Hinweis: Der frühere JSON-Export/-Import wurde entfernt — die Excel-Datei ist die vollständige Sicherung.
 
 ## Leere Startdateien
 

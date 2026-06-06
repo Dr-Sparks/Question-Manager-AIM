@@ -4,6 +4,30 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.20] — 2026-06-06
+
+### Behoben
+- **Weiterbildungsgänge-Matrix konsistent.** Sie enthielt zuvor Kurse, die gar
+  nicht in der Fragen-Datenbank / Kurs-Übersicht standen. Die Beispieldaten
+  verwenden jetzt durchgehend dieselben **4 Kurse** (Matrix, Kurs-Übersicht und
+  Fragen-Datenbank stimmen überein) — in 2 Weiterbildungsgängen.
+
+### Geändert
+- **Nur noch Excel für Import/Export — kein JSON mehr.** Im Dashboard wurden die
+  JSON-Knöpfe entfernt; die Excel-Datei ist die vollständige Sicherung. Neben den
+  Knöpfen erklärt jetzt je ein **kurzer Hinweis**, wofür sie da sind.
+- **Fragen-Datenbank aufgeräumt:** die alten Import/Export-Knöpfe entfernt (der
+  Word-Import für Dozierende folgt in einer der nächsten Versionen). Neue Fragen
+  über **+ Neue Frage**.
+- **Anleitung im 2-Spalten-Layout:** Schritt 1 & 2 stehen jetzt nebeneinander
+  (AIM-Teil und Testportal-Teil), auf schmalen Fenstern einspaltig. Die
+  Live-Demos skalieren passend in ihre Spalte.
+
+### Verbessert
+- **Genauere Animationen** in der AIM-Anleitung: der Cursor sitzt jetzt auf dem
+  beschriebenen Bedienelement, die Sprechblasen sind kompakter und überdecken die
+  Demo nicht mehr.
+
 ## [1.0.19] — 2026-06-05
 
 ### Geändert

@@ -118,14 +118,14 @@ function Callout({ x, y, tail = "top-left", children, color = "tD", visible = tr
         position: "absolute",
         left: x,
         top: y,
-        maxWidth: 260,
+        maxWidth: 200,
         background: bg,
         color: fg,
         fontFamily: sans,
-        fontSize: 12.5,
-        lineHeight: 1.45,
-        padding: "9px 12px",
-        borderRadius: 8,
+        fontSize: 11.5,
+        lineHeight: 1.4,
+        padding: "7px 10px",
+        borderRadius: 7,
         boxShadow: "0 6px 24px rgba(0,0,0,0.25)",
         pointerEvents: "none",
         opacity: visible ? 1 : 0,
@@ -187,22 +187,39 @@ function Callout({ x, y, tail = "top-left", children, color = "tD", visible = tr
 // callouts. Pointer events on the inner content are disabled so the tour
 // can never accidentally trigger real handlers (downloads, modals).
 function PageStage({ scale = 0.7, naturalWidth = 1500, naturalHeight, children, overlay }) {
+  // Scale the live page to FIT the container width, so it works in both the
+  // 1-column and 2-column Anleitung layouts without overflowing. `scale` is
+  // only a fallback before the first measurement.
+  const ref = useRef(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) setW(e.contentRect.width);
+    });
+    ro.observe(el);
+    setW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  const fit = w ? w / naturalWidth : scale;
   return (
     <div
+      ref={ref}
       style={{
         position: "relative",
         background: C.wW,
         border: `1px solid ${C.bo}`,
         borderRadius: 10,
         overflow: "hidden",
-        height: naturalHeight ? naturalHeight * scale : undefined,
+        height: naturalHeight ? naturalHeight * fit : undefined,
       }}
     >
       <div
         aria-hidden
         style={{
           width: naturalWidth,
-          transform: `scale(${scale})`,
+          transform: `scale(${fit})`,
           transformOrigin: "top left",
           pointerEvents: "none",
           userSelect: "none",
@@ -392,9 +409,9 @@ const noop = () => {};
 
 // ─── single tour section helper ──────────────────────────────────────────
 
-function TourSection({ index, title, lead, stage }) {
+function TourSection({ index, title, lead, stage, wide }) {
   return (
-    <section style={{ marginBottom: 36 }}>
+    <section style={{ marginBottom: 28, ...(wide ? { gridColumn: "1 / -1" } : null) }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
         <div
           style={{
@@ -437,57 +454,41 @@ function TourSection({ index, title, lead, stage }) {
   );
 }
 
+// Renders a step's speech bubble + the cursor pointing at the tail target.
+// The cursor sits just ABOVE the callout (at the control the top tail points
+// to) — that's where the described element actually is.
+function StageOverlay({ s }) {
+  const right = s.tail.includes("right");
+  const top = s.tail.includes("top");
+  return (
+    <>
+      <Callout x={s.x} y={s.y} tail={s.tail}>{s.text}</Callout>
+      <Cursor
+        x={`calc(${s.x} + ${right ? "166px" : "12px"})`}
+        y={top ? `calc(${s.y} - 16px)` : `calc(${s.y} + 16px)`}
+        clicked
+      />
+    </>
+  );
+}
+
 // ─── per-page tour scenes (AIM Prüfungs-Manager) ───────────────────────────
 
 // 1. Dashboard. The page itself is fairly tall — we render it at scale 0.7
 //    and step the cursor across its main panels.
 function StageDashboard() {
   const stops = [
-    {
-      x: "82%",
-      y: "8%",
-      tail: "top-right",
-      text: "Auf „Neue Prüfung“ klicken — startet den Prüfungsbau direkt aus dem Dashboard.",
-    },
-    {
-      x: "8%",
-      y: "16%",
-      tail: "top-left",
-      text: "Hier siehst du die Gesamtzahl der Fragen, Kurse, Weiterbildungsgänge und gespeicherten Prüfungen auf einen Blick.",
-    },
-    {
-      x: "60%",
-      y: "32%",
-      tail: "top-left",
-      text: "Schnellzugriff — direkt zu „Prüfung erstellen“ oder „Fragen verwalten“ springen.",
-    },
-    {
-      x: "10%",
-      y: "62%",
-      tail: "top-left",
-      text: "Datensicherung: JSON-Backup für alles oder Excel für Fragen + Programme. Regelmäßig nutzen!",
-    },
-    {
-      x: "62%",
-      y: "62%",
-      tail: "top-right",
-      text: "„Alle Daten löschen“ wischt die App leer — vorher wird automatisch ein Snapshot gesichert.",
-    },
+    { x: "61%", y: "9%", tail: "top-right", text: "Auf „Neue Prüfung“ klicken — startet den Prüfungsbau direkt aus dem Dashboard." },
+    { x: "12%", y: "17%", tail: "top-left", text: "Hier siehst du die Gesamtzahl der Fragen, Kurse, Weiterbildungsgänge und gespeicherten Prüfungen auf einen Blick." },
+    { x: "44%", y: "25%", tail: "top-right", text: "Schnellzugriff — direkt zu „Prüfung erstellen“ oder „Fragen verwalten“ springen." },
+    { x: "24%", y: "46%", tail: "top-left", text: "Datensicherung: alle Daten als Excel-Datei sichern oder wieder zurückladen. Regelmäßig nutzen!" },
+    { x: "48%", y: "54%", tail: "top-left", text: "„Alle Daten löschen“ wischt die App leer — vorher wird automatisch ein Snapshot gesichert." },
   ];
   const step = useLoop(stops.length, 4000);
   const s = stops[step];
   return (
     <PageStage scale={0.62} naturalWidth={1500} naturalHeight={1100}
-      overlay={(
-        <>
-          <Callout x={s.x} y={s.y} tail={s.tail}>{s.text}</Callout>
-          <Cursor
-            x={`calc(${s.x} + ${s.tail.includes("right") ? "180px" : "20px"})`}
-            y={`calc(${s.y} + 22px)`}
-            clicked
-          />
-        </>
-      )}
+      overlay={<StageOverlay s={s} />}
     >
       <div style={{ display: "flex", minHeight: 1100 }}>
         <Dashboard
@@ -550,16 +551,7 @@ function StageQuestionDB() {
   const s = stops[step];
   return (
     <PageStage scale={0.6} naturalWidth={1500} naturalHeight={1050}
-      overlay={(
-        <>
-          <Callout x={s.x} y={s.y} tail={s.tail}>{s.text}</Callout>
-          <Cursor
-            x={`calc(${s.x} + ${s.tail.includes("right") ? "200px" : "10px"})`}
-            y={`calc(${s.y} + 26px)`}
-            clicked
-          />
-        </>
-      )}
+      overlay={<StageOverlay s={s} />}
     >
       <div style={{ display: "flex", minHeight: 1050 }}>
         <QuestionDB
@@ -613,16 +605,7 @@ function StageProgramsView() {
   const s = stops[step];
   return (
     <PageStage scale={0.6} naturalWidth={1500} naturalHeight={900}
-      overlay={(
-        <>
-          <Callout x={s.x} y={s.y} tail={s.tail}>{s.text}</Callout>
-          <Cursor
-            x={`calc(${s.x} + ${s.tail.includes("right") ? "200px" : "30px"})`}
-            y={`calc(${s.y} + 22px)`}
-            clicked
-          />
-        </>
-      )}
+      overlay={<StageOverlay s={s} />}
     >
       <div style={{ display: "flex", minHeight: 900 }}>
         <Programs
@@ -676,16 +659,7 @@ function StageExamBuilder() {
   const s = stops[step];
   return (
     <PageStage scale={0.6} naturalWidth={1500} naturalHeight={900}
-      overlay={(
-        <>
-          <Callout x={s.x} y={s.y} tail={s.tail}>{s.text}</Callout>
-          <Cursor
-            x={`calc(${s.x} + ${s.tail.includes("right") ? "200px" : "30px"})`}
-            y={`calc(${s.y} + 22px)`}
-            clicked
-          />
-        </>
-      )}
+      overlay={<StageOverlay s={s} />}
     >
       <div style={{ display: "flex", minHeight: 900 }}>
         <ExamBuilder
@@ -737,16 +711,7 @@ function StageExportView() {
   const s = stops[step];
   return (
     <PageStage scale={0.6} naturalWidth={1500} naturalHeight={900}
-      overlay={(
-        <>
-          <Callout x={s.x} y={s.y} tail={s.tail}>{s.text}</Callout>
-          <Cursor
-            x={`calc(${s.x} + ${s.tail.includes("right") ? "200px" : "20px"})`}
-            y={`calc(${s.y} + 26px)`}
-            clicked
-          />
-        </>
-      )}
+      overlay={<StageOverlay s={s} />}
     >
       <div style={{ display: "flex", minHeight: 900 }}>
         <ExportView
@@ -790,12 +755,7 @@ function StageSettings() {
   const s = stops[step];
   return (
     <PageStage scale={0.7} naturalWidth={900} naturalHeight={600}
-      overlay={(
-        <>
-          <Callout x={s.x} y={s.y} tail={s.tail}>{s.text}</Callout>
-          <Cursor x={`calc(${s.x} + 30px)`} y={`calc(${s.y} + 24px)`} clicked />
-        </>
-      )}
+      overlay={<StageOverlay s={s} />}
     >
       <div style={{ display: "flex", minHeight: 600 }}>
         <SettingsPage
@@ -817,7 +777,7 @@ const CHECKLIST_ITEMS = [
   { k: "program", label: "Eigenen Weiterbildungsgang anlegen" },
   { k: "question", label: "Erste eigene Frage hinzufügen" },
   { k: "exam", label: "Erste eigene Prüfung erstellen und als Word-Datei speichern" },
-  { k: "backup", label: "JSON-Backup exportieren und an einem sicheren Ort speichern" },
+  { k: "backup", label: "Excel-Backup exportieren und an einem sicheren Ort speichern" },
 ];
 
 function Checklist() {
@@ -981,7 +941,7 @@ function AboutInfo({ version }) {
           <div style={{ fontSize: 12, color: C.tx, lineHeight: 1.55 }}>
             Alle Daten werden lokal auf diesem Computer gespeichert. Nichts wird
             ins Internet geschickt. Für Sicherheit und Übertragung das
-            JSON-Backup auf dem Dashboard nutzen.
+            Excel-Backup auf dem Dashboard nutzen.
           </div>
         </div>
         <div>
@@ -1409,6 +1369,7 @@ function AimGuide() {
         wichtige Bedienelement. Klicks hier sind nur zur Ansicht — du kannst nichts kaputt machen.
       </div>
 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(440px, 1fr))", gap: 28, alignItems: "start" }}>
       <TourSection
         index={1}
         title="Dashboard — die Startseite"
@@ -1450,6 +1411,7 @@ function AimGuide() {
         lead="Hier legst du fest, wie sich die App standardmäßig verhält: ob die Weiterbildungsgang-Übersicht beim Start gesperrt ist, welche Zoomstufe voreingestellt ist und ob Hellmodus oder Dunkelmodus aktiv sein soll."
         stage={<StageSettings />}
       />
+      </div>
 
       <h2
         style={{
@@ -1558,10 +1520,12 @@ function TestportalGuide() {
 
       <SpeedControl speed={speed} onSelect={selectSpeed} />
 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(440px, 1fr))", gap: 28, alignItems: "start" }}>
       {TP_STEPS.map((step, i) => (
         <TourSection
           key={step.video}
           index={i + 1}
+          wide={!!step.subSteps}
           title={step.title}
           lead={step.lead}
           stage={
@@ -1579,6 +1543,7 @@ function TestportalGuide() {
           }
         />
       ))}
+      </div>
     </>
   );
 }
@@ -1599,7 +1564,7 @@ const AIM_STEPS = [
       "Oben die **Statistik-Karten**: Gesamtzahl der **Fragen**, **Kurse**, **Weiterbildungsgänge** und gespeicherten Prüfungen.",
       "Über **Neue Prüfung** startet der Prüfungsbau direkt aus dem Dashboard.",
       "Der **Schnellzugriff** führt direkt zu „Prüfung erstellen“ oder „Fragen verwalten“.",
-      "**Datensicherung**: vollständiges **JSON-Backup** oder **Excel-Export** (Fragen + Weiterbildungsgänge). Regelmäßig nutzen!",
+      "**Datensicherung**: alle Daten als **Excel-Datei** sichern und bei Bedarf wieder importieren. Regelmäßig nutzen!",
       "**Alle Daten löschen** leert die App — vorher wird automatisch ein Sicherungs-Snapshot erstellt, der über **Letzten Stand wiederherstellen** zurückgeholt werden kann.",
     ],
   },
@@ -1612,7 +1577,7 @@ const AIM_STEPS = [
       "Über die **Suchleiste** nach Stichwort suchen; die **Filter** grenzen auf Kurs, Dozent/in, Weiterbildungsgang oder Format ein.",
       "Die Spalte **Weiterbildungsgänge** zeigt als kleine Plaketten, zu welchen Gängen jede Frage passt.",
       "Eine **Zeile pro Frage** mit Kurs, Jahr, Dozent/in, Format und der korrekten Antwort.",
-      "**Import** (JSON/CSV) und **Export** stehen im Bearbeiten-Modus bereit.",
+      "Neue Fragen fügst du im Bearbeiten-Modus über **+ Neue Frage** hinzu.",
     ],
   },
   {

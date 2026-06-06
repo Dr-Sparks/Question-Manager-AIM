@@ -76,28 +76,14 @@ const mod=(year='',lecturer='',course='')=>({year,lecturer,course});
 const sem=(nr,modules=[])=>({sem:nr,modules:Array.from({length:MODULES_PER_SEMESTER},(_,i)=>({year:'',lecturer:'',course:'',...(modules[i]||{})}))});
 const INIT_P=[
 {id:1,name:'WBS 55 (2024)',startYear:'2024',startTerm:'HS',semesters:[
-  sem(1,[mod('2025','Judith Alder','Psychoonkologie'),mod('2025','Dr. phil. Armita Tschitsaz','Psychosomatische Erkrankungen'),mod('2026','Andrea Rotter','Schwierige Therapiesituationen'),mod('2025','Marina Poppinger','Einführung in die Schematherapie')]),
-  sem(2,[mod('2025','Dr. Jörg Petry','Sucht'),mod('2026','Jannis Behr','Einführung in die Akzeptanz- und Commitmenttherapie'),mod('2025','Dr. phil. Armin Blickenstorfer','CBASP als Weg aus dem Dauertief'),mod('2025','Dr. phil. Dominique Holstein','Emotionsfokussierte Therapie')]),
-  sem(3,[mod('2025','lic.phil. Florian Hug','Plananalyse und motivorientierte Beziehungsgestaltung'),mod('2025','Verena Jaggi','Autismus-Spektrum-Störungen im Erwachsenenalter'),mod('2026','Dr. med. Peter N. Kissling','Psychopharmakotherapie'),mod('2025','Prof. Dr. Ueli Kramer','Einführung in die Psychotherapie der Persönlichkeitsstörungen')]),
-  sem(4,[mod('2025','Hans Lieb','Systemische Paar- und Familientherapie'),mod('2025','Christian Lorenz','Integrative Psychotherapie bei Abhängigkeitserkrankungen'),mod('2025','Dr. phil. Yoan Mihov','Essstörungen'),mod('2025','Monika Renz','Sterbeprozesse')]),
-  sem(5,[mod('2025','Dr. phil. Kristina Rohde','Akut- und Krisensituationen'),mod('2025','Dr. phil. Kristina Rohde','Therapiemotivation'),mod('2025','Dr. phil. Daniel Zehnder','Einführung in die Problem- und Verhaltensanalyse'),mod('2026','Fanny de Tribolet-Hardy','Sexuelle Störungen')]),
-  sem(6,[mod('','',''),mod('','',''),mod('','',''),mod('','','')]),
+  sem(1,[mod('2025','Judith Alder','Psychoonkologie'),mod('2025','Dr. phil. Armita Tschitsaz','Psychosomatische Erkrankungen')]),
+  sem(2,[mod('2026','Andrea Rotter','Schwierige Therapiesituationen'),mod('2025','Marina Poppinger','Einführung in die Schematherapie')]),
+  sem(3,[]),sem(4,[]),sem(5,[]),sem(6,[]),
 ]},
-{id:2,name:'WBS 56 (2025)',startYear:'2025',startTerm:'HS',semesters:[
-  sem(1,[mod('2025','Dr. Jörg Petry','Sucht'),mod('2026','Jannis Behr','Einführung in die Akzeptanz- und Commitmenttherapie'),mod('2025','Dr. phil. Armin Blickenstorfer','CBASP als Weg aus dem Dauertief'),mod('2025','Dr. phil. Dominique Holstein','Emotionsfokussierte Therapie')]),
-  sem(2,[mod('2025','Judith Alder','Psychoonkologie'),mod('2025','Dr. phil. Armita Tschitsaz','Psychosomatische Erkrankungen'),mod('2026','Andrea Rotter','Schwierige Therapiesituationen'),mod('2025','Marina Poppinger','Einführung in die Schematherapie')]),
-  sem(3,[mod('2025','lic.phil. Florian Hug','Plananalyse und motivorientierte Beziehungsgestaltung'),mod('2025','Verena Jaggi','Autismus-Spektrum-Störungen im Erwachsenenalter'),mod('2026','Dr. med. Peter N. Kissling','Psychopharmakotherapie'),mod('2025','Prof. Dr. Ueli Kramer','Einführung in die Psychotherapie der Persönlichkeitsstörungen')]),
-  sem(4,[mod('2025','Hans Lieb','Systemische Paar- und Familientherapie'),mod('2025','Christian Lorenz','Integrative Psychotherapie bei Abhängigkeitserkrankungen'),mod('2025','Dr. phil. Yoan Mihov','Essstörungen'),mod('2025','Monika Renz','Sterbeprozesse')]),
-  sem(5,[mod('2025','Dr. phil. Kristina Rohde','Akut- und Krisensituationen'),mod('2025','Dr. phil. Kristina Rohde','Therapiemotivation'),mod('2025','Dr. phil. Daniel Zehnder','Einführung in die Problem- und Verhaltensanalyse'),mod('2026','Fanny de Tribolet-Hardy','Sexuelle Störungen')]),
-  sem(6,[mod('','',''),mod('','',''),mod('','',''),mod('','','')]),
-]},
-{id:3,name:'WBS Zürich (2025)',startYear:'2025',startTerm:'FS',semesters:[
-  sem(1,[mod('2025','Judith Alder','Psychoonkologie'),mod('2025','Dr. phil. Armita Tschitsaz','Psychosomatische Erkrankungen'),mod('2026','Andrea Rotter','Schwierige Therapiesituationen'),mod('2025','Marina Poppinger','Einführung in die Schematherapie')]),
-  sem(2,[mod('2025','Dr. Jörg Petry','Sucht'),mod('2026','Jannis Behr','Einführung in die Akzeptanz- und Commitmenttherapie'),mod('2025','Dr. phil. Armin Blickenstorfer','CBASP als Weg aus dem Dauertief'),mod('2025','Dr. phil. Dominique Holstein','Emotionsfokussierte Therapie')]),
-  sem(3,[mod('2025','lic.phil. Florian Hug','Plananalyse und motivorientierte Beziehungsgestaltung'),mod('2025','Verena Jaggi','Autismus-Spektrum-Störungen im Erwachsenenalter'),mod('2026','Dr. med. Peter N. Kissling','Psychopharmakotherapie'),mod('2025','Prof. Dr. Ueli Kramer','Einführung in die Psychotherapie der Persönlichkeitsstörungen')]),
-  sem(4,[mod('','',''),mod('','',''),mod('','',''),mod('','','')]),
-  sem(5,[mod('','',''),mod('','',''),mod('','',''),mod('','','')]),
-  sem(6,[mod('','',''),mod('','',''),mod('','',''),mod('','','')]),
+{id:2,name:'WBS Zürich (2025)',startYear:'2025',startTerm:'FS',semesters:[
+  sem(1,[mod('2026','Andrea Rotter','Schwierige Therapiesituationen'),mod('2025','Marina Poppinger','Einführung in die Schematherapie')]),
+  sem(2,[mod('2025','Judith Alder','Psychoonkologie'),mod('2025','Dr. phil. Armita Tschitsaz','Psychosomatische Erkrankungen')]),
+  sem(3,[]),sem(4,[]),sem(5,[]),sem(6,[]),
 ]},
 ];
 
@@ -1796,24 +1782,18 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
         </div>
         <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,padding:16,marginTop:16}}>
           <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>Datensicherung</div>
-          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Alle Daten werden automatisch auf diesem Computer gespeichert. Zum Weitergeben oder als Sicherheitskopie eignet sich der Export. Backups enthalten auch die <strong>gespeicherten Prüfungen</strong>.</p>
-          <input ref={restoreRef} type="file" accept=".json" style={{display:'none'}} onChange={restoreBackup}/>
+          <p style={{fontSize:'13px',color:C.tx,margin:'0 0 12px',lineHeight:1.55}}>Alle Daten werden automatisch auf diesem Computer gespeichert. Zum Aufbewahren oder Weitergeben kannst du alles als <strong>Excel-Datei</strong> exportieren und später wieder importieren.</p>
           <input ref={excelImportRef} type="file" accept=".xlsx" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];e.target.value='';requestExcelImport(f);}}/>
-          <div style={{marginBottom:12}}>
-            <div style={{fontSize:'11px',color:C.mu,marginBottom:6,fontWeight:500}}>JSON (vollständiges Backup)</div>
-            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              <Btn ch="💾 Jetzt sichern" onClick={()=>{try{window.localStorage.setItem('aim_q',JSON.stringify(questions));window.localStorage.setItem('aim_p',JSON.stringify(programs));window.localStorage.setItem('aim_saved_exams',JSON.stringify(savedExams));if(exam){window.localStorage.setItem('aim_exam',JSON.stringify({exam,name:examName||''}));}showToast('Daten gespeichert.','success');}catch{showToast('Speichern fehlgeschlagen.','error');}}} v="secondary"/>
-              <Btn ch="↑ JSON laden" onClick={()=>restoreRef.current?.click()} v="ghost"/>
-              <Btn ch="↓ JSON exportieren" onClick={exportBackup} v="ghost"/>
-            </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
+            <Btn ch="💾 Jetzt sichern" onClick={()=>{try{window.localStorage.setItem('aim_q',JSON.stringify(questions));window.localStorage.setItem('aim_p',JSON.stringify(programs));window.localStorage.setItem('aim_saved_exams',JSON.stringify(savedExams));if(exam){window.localStorage.setItem('aim_exam',JSON.stringify({exam,name:examName||''}));}showToast('Daten gespeichert.','success');}catch{showToast('Speichern fehlgeschlagen.','error');}}} v="secondary"/>
+            <Btn ch="↓ Excel exportieren" onClick={()=>{exportExcel(questions,programs,savedExams,courseTags);showToast('Excel-Datei wird heruntergeladen.','success');}} v="ghost"/>
+            <Btn ch="↑ Excel importieren" onClick={()=>excelImportRef.current?.click()} v="ghost"/>
           </div>
-          <div>
-            <div style={{fontSize:'11px',color:C.mu,marginBottom:6,fontWeight:500}}>Excel (Fragen, Weiterbildungsgänge, Semesteransicht, Gespeicherte Prüfungen)</div>
-            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              <Btn ch="↓ Excel exportieren" onClick={()=>{exportExcel(questions,programs,savedExams,courseTags);showToast('Excel-Datei wird heruntergeladen.','success');}} v="ghost"/>
-              <Btn ch="↑ Excel importieren" onClick={()=>excelImportRef.current?.click()} v="ghost"/>
-            </div>
-          </div>
+          <ul style={{listStyle:'none',margin:0,padding:0,display:'grid',gap:5}}>
+            {[['💾 Jetzt sichern','speichert deine Daten sofort auf diesem Computer.'],['↓ Excel exportieren','sichert alle Daten (Fragen, Weiterbildungsgänge, gespeicherte Prüfungen) als Excel-Datei — zum Aufbewahren oder Weitergeben.'],['↑ Excel importieren','lädt eine zuvor exportierte Excel-Datei zurück in die App — mit Vorschau vor dem Übernehmen.']].map(([b,t],i)=>(
+              <li key={i} style={{fontSize:'12px',color:C.mu,lineHeight:1.5}}><strong style={{color:C.tx}}>{b}</strong> — {t}</li>
+            ))}
+          </ul>
         </div>
         <div style={{background:C.wh,border:`1px solid ${C.bo}`,borderRadius:8,padding:16,marginTop:16}}>
           <div style={{fontSize:'11px',letterSpacing:'1.5px',textTransform:'uppercase',color:C.mu,marginBottom:8,fontWeight:500}}>Daten zurücksetzen</div>
@@ -2106,34 +2086,11 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
     <div style={{padding:28}}>
       <SectionHeader title="Fragen Datenbank" sub={`${questions.length} Fragen · ${courses.length} Kurse`} action={
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-          <input ref={importRef} type="file" accept=".json,.csv,.xlsx,.xls" style={{display:'none'}} onChange={importFile}/>
           <Btn ch={editMode?'🔒 Ansicht':'✏️ Bearbeiten'} onClick={()=>setEditMode(m=>!m)} v={editMode?'secondary':'ghost'} sm/>
-          <Btn ch="↑ Import" onClick={()=>{setShowImportInfo(v=>!v);}} v="ghost" sm/>
-          {editMode&&<>
-            <Btn ch="↓ JSON Export" onClick={exportQuestions} v="ghost" sm/>
-            <Btn ch="↓ Excel Export" onClick={exportQuestionsXlsx} v="ghost" sm/>
-            <Btn ch="+ Neue Frage" onClick={openNew} v="primary"/>
-          </>}
+          {editMode&&<Btn ch="+ Neue Frage" onClick={openNew} v="primary"/>}
         </div>
       }/>
-      {showImportInfo&&(
-        <div style={{background:'var(--c-tP)',border:'1px solid var(--c-tL)',borderRadius:8,padding:'14px 16px',marginBottom:16}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-            <div style={{fontWeight:600,fontSize:'13px',color:'var(--c-tD)',marginBottom:8}}>Import-Vorlage: JSON, CSV oder Excel</div>
-            <button onClick={()=>setShowImportInfo(false)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--c-mu)',fontSize:16,lineHeight:1}}>✕</button>
-          </div>
-          <div style={{fontSize:'12px',color:'var(--c-tx)',lineHeight:1.7,marginBottom:8}}>
-            Pflichtfelder: <strong>course</strong>, <strong>question</strong>, <strong>answer</strong><br/>
-            Optionale Felder: <code>format</code>, <code>optA</code>, <code>optB</code>, <code>optC</code>, <code>optD</code>, <code>optE</code>, <code>lecturer</code>, <code>year</code>, <code>location</code>, <code>ID</code><br/>
-            Tipp: Für Excel-Roundtrips zuerst <strong>↓ Excel Export</strong> verwenden. Die <strong>ID</strong>-Spalte sorgt dafür, dass bearbeitete Fragen wieder sauber aktualisiert werden statt doppelt zu erscheinen.
-          </div>
-          <div style={{background:'var(--c-wh)',borderRadius:6,padding:'10px 12px',fontFamily:'monospace',fontSize:'11px',color:'var(--c-tx)',lineHeight:1.8,marginBottom:10}}>
-            {`[{\n  "ID": "1",\n  "course": "Psychoonkologie",\n  "question": "Welche Intervention ist angezeigt?",\n  "format": "Single Choice",\n  "optA": "Option A",\n  "optB": "Option B",\n  "optC": "Option C",\n  "optD": "Option D",\n  "answer": "A",\n  "lecturer": "Dr. Muster",\n  "year": "2025"\n}]`}
-          </div>
-          <Btn ch="↑ Datei auswählen" onClick={()=>importRef.current?.click()} v="primary" sm/>
-        </div>
-      )}
-      {!showImportInfo&&(
+      {(
         <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}}>
           <input style={{...inp,width:240}} placeholder="Suche Frage, Kurs, Dozent…" value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}/>
           <select style={{...inp,width:200}} value={filterCourse} onChange={e=>{setFilterCourse(e.target.value);setPage(0);}}>
