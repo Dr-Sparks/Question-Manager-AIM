@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import AnleitungPage from "./src/AnleitungPage.jsx";
 
 // Color tokens — values come from CSS custom properties so dark/light mode works
@@ -1261,6 +1262,135 @@ function buildDocx(qs){
   ]);
 }
 
+// ─── Word-Vorlage (Fragen-Importvorlage für Dozierende) ───────────────────────
+// Spalten der Vorlagen-Tabelle. Die Import-Erkennung in parseDocxQuestions()
+// gleicht Kopfzeilen-Texte (lowercase) per "includes" gegen diese ab.
+export const VORLAGE_COLS=['Format','Kurs','Dozent/in','Jahr','Standort','Frage','Antwort A','Antwort B','Antwort C','Antwort D','Antwort E','Richtige Antwort(en)','Weiterbildungsgänge'];
+const VORLAGE_W=[1300,1500,1300,600,800,2000,1100,1100,1100,1100,1100,1100,1500];
+
+function dxCell(text,{bold=false,w=1500,shade}={}){
+  const rpr=`<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>${bold?'<w:b/><w:bCs/>':''}<w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>`;
+  const tcPr=`<w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${shade?`<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>`:''}<w:vAlign w:val="center"/></w:tcPr>`;
+  return `<w:tc>${tcPr}<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>${rpr}<w:t xml:space="preserve">${docxEsc(text)}</w:t></w:r></w:p></w:tc>`;
+}
+const dxRow=cells=>`<w:tr>${cells.join('')}</w:tr>`;
+
+function buildVorlageDocumentXml(){
+  const intro=[
+    docxPara('AIM Prüfungs-Manager — Fragen-Vorlage',true),
+    docxPara('Bitte tragen Sie Ihre Prüfungsfragen direkt in die Tabelle unten ein — eine Zeile pro Frage. Schicken Sie die ausgefüllte Datei anschliessend zurück; sie wird dann in den AIM Prüfungs-Manager importiert.',false),
+    docxPara('',false),
+    docxPara('So füllen Sie die Tabelle aus:',true),
+    docxPara('•  Format: „Single Choice" (eine richtige Antwort), „Multiple Choice" (mehrere richtige Antworten), „Richtig/Falsch" oder „Ja/Nein".',false),
+    docxPara('•  Kurs und Frage sind Pflichtfelder. Dozent/in, Jahr und Standort sind optional.',false),
+    docxPara('•  Antworten A–E: bei „Richtig/Falsch" und „Ja/Nein" leer lassen — die App ergänzt die Optionen automatisch.',false),
+    docxPara('•  Richtige Antwort(en): den/die Buchstaben angeben, z. B. „A". Bei Multiple Choice mehrere mit Strichpunkt: „A;C". Bei „Richtig/Falsch" „Richtig" oder „Falsch", bei „Ja/Nein" „Ja" oder „Nein".',false),
+    docxPara('•  Weiterbildungsgänge (optional): zu welchen Weiterbildungsgängen der Kurs gehört, mehrere mit Komma trennen.',false),
+    docxPara('•  Leere Zeilen werden beim Import ignoriert. Sie können Zeilen hinzufügen (Tabulator-Taste in der letzten Zelle) oder entfernen.',false),
+    docxPara('',false),
+    docxPara('Beispiel (eine ausgefüllte Zeile):',true),
+    docxPara('Single Choice  |  Psychoonkologie  |  Dr. Muster  |  2025  |  Bern  |  Welche Intervention ist bei akuter Belastung zuerst angezeigt?  |  Psychoedukation  |  Konfrontation  |  Vermeidung  |  Schweigen  |  (leer)  |  A  |  WBS 55 (2024)',false),
+    docxPara('',false),
+  ].join('');
+  const grid=VORLAGE_W.map(w=>`<w:gridCol w:w="${w}"/>`).join('');
+  const header=dxRow(VORLAGE_COLS.map((c,i)=>dxCell(c,{bold:true,w:VORLAGE_W[i],shade:'E7E6E6'})));
+  const rows=[];
+  for(let r=0;r<18;r++) rows.push(dxRow(VORLAGE_W.map(w=>dxCell('',{w}))));
+  const bd=c=>`<w:${c} w:val="single" w:sz="4" w:space="0" w:color="999999"/>`;
+  const borders=`<w:tblBorders>${bd('top')}${bd('left')}${bd('bottom')}${bd('right')}${bd('insideH')}${bd('insideV')}</w:tblBorders>`;
+  const tbl=`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/>${borders}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${header}${rows.join('')}</w:tbl>`;
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+
+    intro+tbl+
+    '<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="720" w:right="567" w:bottom="720" w:left="567" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>'+
+    '</w:body></w:document>';
+}
+
+function buildVorlageDocx(){
+  return zipStore([
+    {name:'[Content_Types].xml',data:DOCX_CONTENT_TYPES},
+    {name:'_rels/.rels',data:DOCX_RELS},
+    {name:'word/document.xml',data:buildVorlageDocumentXml()},
+  ]);
+}
+
+// Buchstaben/Worte einer „Richtige Antwort"-Zelle auf das interne Format
+// (z. B. "A" oder "A;C") normalisieren.
+function normalizeImportAnswer(raw,format){
+  const s=String(raw==null?'':raw).trim();
+  if(format==='Richtig/Falsch'){
+    if(/^(a|richtig|wahr|true|r|w)$/i.test(s))return 'A';
+    if(/^(b|falsch|false|f)$/i.test(s))return 'B';
+  }
+  if(format==='Ja/Nein'){
+    if(/^(a|ja|yes|j|y)$/i.test(s))return 'A';
+    if(/^(b|nein|no|n)$/i.test(s))return 'B';
+  }
+  const letters=[...new Set((s.toUpperCase().match(/[A-E]/g)||[]))];
+  return letters.join(';');
+}
+
+const FMT_IMPORT_MAP={
+  'single choice':'Single Choice','single':'Single Choice','sc':'Single Choice','einfachauswahl':'Single Choice',
+  'multiple choice':'Multiple Choice','multiple':'Multiple Choice','mc':'Multiple Choice','mehrfachauswahl':'Multiple Choice',
+  'richtig/falsch':'Richtig/Falsch','richtig falsch':'Richtig/Falsch','wahr/falsch':'Richtig/Falsch','true/false':'Richtig/Falsch','r/f':'Richtig/Falsch',
+  'ja/nein':'Ja/Nein','yes/no':'Ja/Nein','j/n':'Ja/Nein',
+};
+
+// parseDocxTableQuestions(documentXml, programs) → {questions:[{id:'',...}], courseTags:{course:[wbgId]}}
+// Reine Logik (ohne JSZip): liest die erste Tabelle aus dem Word-document.xml.
+// Tolerant gegenüber echten Word-Dateien (mehrere <w:r>/<w:t>-Runs pro Zelle,
+// rsid-Attribute, vorangestellte Anleitungs-Absätze). Separat gehalten, damit
+// die Extraktion ohne Datei-Entpacken testbar ist (siehe Helpers-Tests).
+function parseDocxTableQuestions(xml,programs=[]){
+  const tblMatch=xml.match(/<w:tbl[\s>][\s\S]*?<\/w:tbl>/);
+  if(!tblMatch) throw new Error('In der Datei wurde keine Tabelle gefunden. Bitte die mitgelieferte Vorlage verwenden.');
+  const tbl=tblMatch[0];
+  const trList=tbl.match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g)||[];
+  const cellText=tc=>{
+    const parts=tc.match(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g)||[];
+    const raw=parts.map(p=>p.replace(/^<w:t(?:\s[^>]*)?>/,'').replace(/<\/w:t>$/,'')).join('');
+    return raw.replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&').trim();
+  };
+  const rowCells=tr=>(tr.match(/<w:tc[\s>][\s\S]*?<\/w:tc>/g)||[]).map(cellText);
+  if(!trList.length) return {questions:[],courseTags:{}};
+  const header=rowCells(trList[0]).map(h=>h.toLowerCase());
+  const find=name=>header.findIndex(h=>h.includes(name));
+  const col={format:find('format'),course:find('kurs'),lecturer:find('dozent'),year:find('jahr'),location:find('standort'),question:find('frage'),a:find('antwort a'),b:find('antwort b'),c:find('antwort c'),d:find('antwort d'),e:find('antwort e'),answer:find('richtige'),wbg:find('weiterbildung')};
+  if(col.course<0&&col.question<0&&col.format<0) throw new Error('Die Tabelle hat keine erkennbare Kopfzeile. Bitte die mitgelieferte Vorlage verwenden.');
+  const progByName=new Map((programs||[]).map(p=>[String(p.name||'').trim().toLowerCase(),String(p.id)]));
+  const questions=[];const courseTags={};
+  for(let r=1;r<trList.length;r++){
+    const c=rowCells(trList[r]);
+    const get=k=>col[k]>=0?String(c[col[k]]||'').trim():'';
+    const question=get('question'),course=get('course');
+    const cleanseExample=v=>/^\(leer\)$/i.test(v)?'':v;
+    if(!question&&!course&&!get('a')&&!get('answer')) continue; // leere Zeile
+    let format=FMT_IMPORT_MAP[get('format').toLowerCase()]||'Single Choice';
+    let optA=cleanseExample(get('a')),optB=cleanseExample(get('b')),optC=cleanseExample(get('c')),optD=cleanseExample(get('d')),optE=cleanseExample(get('e'));
+    if(format==='Richtig/Falsch'){optA=optA||'Richtig';optB=optB||'Falsch';optC=optD=optE='';}
+    if(format==='Ja/Nein'){optA=optA||'Ja';optB=optB||'Nein';optC=optD=optE='';}
+    const answer=normalizeImportAnswer(get('answer'),format);
+    questions.push({id:'',year:get('year'),location:get('location'),lecturer:get('lecturer'),course,format,question,optA,optB,optC,optD,optE,answer});
+    const wbgCell=get('wbg');
+    if(course&&wbgCell){
+      const ids=wbgCell.split(/[,;]/).map(s=>s.trim()).filter(Boolean).map(n=>progByName.get(n.toLowerCase())).filter(Boolean);
+      if(ids.length) courseTags[course]=[...new Set([...(courseTags[course]||[]),...ids])];
+    }
+  }
+  return {questions,courseTags};
+}
+
+// parseDocxQuestions(arrayBuffer, programs) → entpackt die .docx (DEFLATE/STORE
+// via JSZip) und übergibt das document.xml an parseDocxTableQuestions().
+async function parseDocxQuestions(arrayBuffer,programs=[]){
+  const zip=await JSZip.loadAsync(arrayBuffer);
+  const docFile=zip.file('word/document.xml');
+  if(!docFile) throw new Error('Das ist keine gültige Word-Datei (word/document.xml fehlt).');
+  const xml=await docFile.async('string');
+  return parseDocxTableQuestions(xml,programs);
+}
+
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 export const inp={width:'100%',fontFamily:sans,fontSize:'14px',padding:'8px 12px',border:'1px solid var(--c-bo)',borderRadius:4,background:'var(--c-wh)',color:'var(--c-tx)',boxSizing:'border-box',outline:'none'};
 export const gridTh={padding:'10px 8px',border:'1px solid var(--c-grid-border)',background:'var(--c-wh)',color:'var(--c-tx)',fontSize:'11px',fontWeight:700,textAlign:'center',whiteSpace:'nowrap'};
@@ -1378,7 +1508,7 @@ function ConfirmModal({confirm,onClose}){
 // Excel import preview modal — v1.0.15
 // Shows the user exactly what will happen before any state changes. Reads
 // counts off the diff returned by computeExcelImportDiff().
-function ExcelImportPreviewModal({preview,onCancel,onApply}){
+function ExcelImportPreviewModal({preview,onCancel,onApply,title='Excel-Import — Vorschau',intro='Vor dem Anwenden wird der aktuelle Stand automatisch gesichert. Du kannst danach auf dem Dashboard mit „Letzten Stand wiederherstellen" zurück.',only=null,bottomNote='Zeilen, die in der Excel-Datei FEHLEN, werden NICHT gelöscht. Lösche Einträge bei Bedarf direkt in der App.'}){
   useEffect(()=>{
     if(!preview) return;
     const prevActive=document.activeElement;
@@ -1391,12 +1521,13 @@ function ExcelImportPreviewModal({preview,onCancel,onApply}){
   },[preview,onCancel]);
   if(!preview) return null;
   const {diff}=preview;
-  const sections=[
+  const allSections=[
     {key:'questions',label:'Fragen',d:diff.questions},
     {key:'programs',label:'Weiterbildungsgänge',d:diff.programs},
     {key:'courseTags',label:'Kurs-Tags',d:diff.courseTags},
     {key:'savedExams',label:'Gespeicherte Prüfungen',d:diff.savedExams},
   ];
+  const sections=only?allSections.filter(s=>only.includes(s.key)):allSections;
   const totals={
     add:sections.reduce((s,x)=>s+x.d.add.length,0),
     update:sections.reduce((s,x)=>s+x.d.update.length,0),
@@ -1406,10 +1537,10 @@ function ExcelImportPreviewModal({preview,onCancel,onApply}){
   return(
     <div role="dialog" aria-modal="true" aria-labelledby="aim-xls-preview-title" style={{position:'fixed',inset:0,background:'rgba(17,17,17,0.5)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center',padding:24}} onClick={onCancel}>
       <div style={{background:C.wh,borderRadius:8,padding:'24px',maxWidth:560,width:'100%',boxShadow:'0 8px 40px rgba(0,0,0,0.25)',maxHeight:'80vh',overflow:'auto'}} onClick={e=>e.stopPropagation()}>
-        <div id="aim-xls-preview-title" style={{fontFamily:serif,fontSize:'17px',color:C.tD,marginBottom:6,fontWeight:700}}>Excel-Import — Vorschau</div>
-        <p style={{fontSize:'13px',color:C.mu,margin:'0 0 16px',lineHeight:1.5}}>
-          Vor dem Anwenden wird der aktuelle Stand automatisch gesichert. Du kannst danach auf dem Dashboard mit „Letzten Stand wiederherstellen" zurück.
-        </p>
+        <div id="aim-xls-preview-title" style={{fontFamily:serif,fontSize:'17px',color:C.tD,marginBottom:6,fontWeight:700}}>{title}</div>
+        {intro&&<p style={{fontSize:'13px',color:C.mu,margin:'0 0 16px',lineHeight:1.5}}>
+          {intro}
+        </p>}
         <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto',gap:'6px 14px',fontSize:'13px',alignItems:'center',marginBottom:16}}>
           <div style={{fontSize:'10px',letterSpacing:'1px',textTransform:'uppercase',color:C.mu}}>Kategorie</div>
           <div style={{fontSize:'10px',letterSpacing:'1px',textTransform:'uppercase',color:C.mu,textAlign:'right'}}>Neu</div>
@@ -1433,9 +1564,9 @@ function ExcelImportPreviewModal({preview,onCancel,onApply}){
             </ul>
           </div>
         )}
-        <div style={{background:C.wmP,border:`1px solid ${C.tL}`,borderRadius:6,padding:'10px 12px',marginBottom:16,fontSize:'12px',color:C.wm}}>
-          <strong>Hinweis:</strong> Zeilen, die in der Excel-Datei FEHLEN, werden NICHT gelöscht. Lösche Einträge bei Bedarf direkt in der App.
-        </div>
+        {bottomNote&&<div style={{background:C.wmP,border:`1px solid ${C.tL}`,borderRadius:6,padding:'10px 12px',marginBottom:16,fontSize:'12px',color:C.wm}}>
+          <strong>Hinweis:</strong> {bottomNote}
+        </div>}
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
           <Btn ch="Abbrechen" onClick={onCancel} v="ghost"/>
           <Btn ch={hasChanges?`Anwenden — ${totals.add} neu, ${totals.update} aktualisiert`:'Keine Änderungen'} onClick={hasChanges?onApply:onCancel} v={hasChanges?'primary':'ghost'} dis={!hasChanges} autoFocus/>
@@ -1846,7 +1977,125 @@ export function Dashboard({questions,programs,exam,examName,savedExams,courseTag
 // ─── Question DB ──────────────────────────────────────────────────────────────
 const emptyQ=()=>({id:newId('q'),year:'',location:'',lecturer:'',course:'',format:'Single Choice',question:'',optA:'',optB:'',optC:'',optD:'',optE:'',answer:'A'});
 
-export function QuestionDB({questions,setQuestions,programs=[],courseTags={},setCourseTags=()=>{},showToast,showConfirm}){
+// ─── Excel-Modus: editierbares Fragen-Raster ──────────────────────────────────
+// Tabellen-Ansicht zum schnellen Erfassen/Bearbeiten vieler Fragen. Tab springt
+// zur nächsten Zelle, Enter eine Zeile tiefer, aus Excel kopierte Zellbereiche
+// lassen sich per Einfügen (⌘V / Strg+V) übernehmen.
+const GRID_COLS=[
+  {k:'course',label:'Kurs',w:160,ph:'Kursname'},
+  {k:'lecturer',label:'Dozent/in',w:130,ph:'Dr. Muster'},
+  {k:'year',label:'Jahr',w:64,ph:'2025'},
+  {k:'location',label:'Standort',w:100,ph:'Bern'},
+  {k:'format',label:'Format',w:150,type:'fmt'},
+  {k:'question',label:'Frage',w:260,ph:'Fragetext'},
+  {k:'optA',label:'A',w:120},
+  {k:'optB',label:'B',w:120},
+  {k:'optC',label:'C',w:120},
+  {k:'optD',label:'D',w:120},
+  {k:'optE',label:'E',w:120},
+  {k:'answer',label:'Richtig',w:90,ph:'A oder A;C'},
+];
+function QuestionGrid({questions,setQuestions,showToast}){
+  const cellRefs=useRef({});
+  const hth={padding:'7px 8px',textAlign:'left',fontSize:'10.5px',fontWeight:500,color:'#f3dcc9',letterSpacing:'0.5px',whiteSpace:'nowrap',borderRight:'1px solid rgba(255,255,255,0.08)'};
+  const cellInp={width:'100%',fontFamily:sans,fontSize:'12.5px',padding:'5px 6px',border:'1px solid transparent',borderRadius:3,background:'transparent',color:'var(--c-tx)',boxSizing:'border-box',outline:'none'};
+  const focusCell=(r,c)=>{const el=cellRefs.current[`${r}-${c}`];if(el){el.focus();try{el.select();}catch{}}};
+  const setCell=(id,key,val)=>setQuestions(prev=>prev.map(q=>q.id===id?{...q,[key]:val}:q));
+  const normFmtCell=(id,val)=>{
+    const fmt=FMT_IMPORT_MAP[String(val).trim().toLowerCase()]||(FORMATS.includes(val)?val:'');
+    setQuestions(prev=>prev.map(q=>{
+      if(q.id!==id)return q;
+      const next={...q,format:fmt||q.format};
+      if(next.format==='Richtig/Falsch'){if(!next.optA)next.optA='Richtig';if(!next.optB)next.optB='Falsch';next.optC=next.optD=next.optE='';}
+      if(next.format==='Ja/Nein'){if(!next.optA)next.optA='Ja';if(!next.optB)next.optB='Nein';next.optC=next.optD=next.optE='';}
+      return next;
+    }));
+  };
+  const addRow=()=>setQuestions(prev=>[...prev,emptyQ()]);
+  const delRow=id=>setQuestions(prev=>prev.filter(q=>q.id!==id));
+  const onPaste=(e,rowIdx,colIdx)=>{
+    const text=e.clipboardData?.getData('text/plain')??'';
+    const lines=text.replace(/\r/g,'').split('\n');
+    if(lines.length&&lines[lines.length-1]==='')lines.pop();
+    if(lines.length===0)return;
+    const gridData=lines.map(l=>l.split('\t'));
+    const isMulti=gridData.length>1||gridData.some(row=>row.length>1);
+    if(!isMulti)return; // einzelne Zelle → normales Einfügen
+    e.preventDefault();
+    setQuestions(prev=>{
+      const next=[...prev];
+      gridData.forEach((cells,r)=>{
+        const ri=rowIdx+r;
+        while(next.length<=ri)next.push(emptyQ());
+        const q={...next[ri]};
+        cells.forEach((raw,ci)=>{
+          const col=GRID_COLS[colIdx+ci];
+          if(!col)return;
+          let v=String(raw).trim();
+          if(col.k==='format')v=FMT_IMPORT_MAP[v.toLowerCase()]||(FORMATS.includes(v)?v:q.format);
+          q[col.k]=v;
+        });
+        if(q.format==='Richtig/Falsch'){if(!q.optA)q.optA='Richtig';if(!q.optB)q.optB='Falsch';q.optC=q.optD=q.optE='';}
+        if(q.format==='Ja/Nein'){if(!q.optA)q.optA='Ja';if(!q.optB)q.optB='Nein';q.optC=q.optD=q.optE='';}
+        q.answer=normalizeImportAnswer(q.answer,q.format);
+        next[ri]=q;
+      });
+      return next;
+    });
+    showToast(`${gridData.length} Zeile(n) eingefügt.`,'success');
+  };
+  return(
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,flexWrap:'wrap'}}>
+        <Btn ch="+ Zeile hinzufügen" onClick={addRow} v="secondary" sm/>
+        <span style={{fontSize:'12px',color:'var(--c-mu)'}}>{questions.length} Fragen · <strong>Tab</strong> = nächste Zelle · <strong>Enter</strong> = nächste Zeile · aus Excel kopierte Zellen mit <strong>⌘V / Strg+V</strong> einfügen</span>
+      </div>
+      <div style={{overflowX:'auto',border:'1px solid var(--c-bo)',borderRadius:8,background:'var(--c-wh)'}}>
+        <table style={{borderCollapse:'collapse',width:'max-content',minWidth:'100%'}}>
+          <thead>
+            <tr style={{background:C.inv}}>
+              <th style={{...hth,width:34}}></th>
+              {GRID_COLS.map(col=><th key={col.k} style={{...hth,minWidth:col.w}}>{col.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {questions.length===0&&<tr><td colSpan={GRID_COLS.length+1} style={{padding:24,textAlign:'center',color:'var(--c-mu)',fontSize:'13px'}}>Noch keine Fragen — klicke <strong>+ Zeile hinzufügen</strong> oder füge Zellen aus Excel ein.</td></tr>}
+            {questions.map((q,r)=>(
+              <tr key={q.id} style={{borderTop:'1px solid var(--c-bo)',background:r%2?'var(--c-wW)':'var(--c-wh)'}}>
+                <td style={{textAlign:'center',padding:0,borderRight:'1px solid var(--c-bo)'}}>
+                  <button onClick={()=>delRow(q.id)} title="Zeile löschen" style={{border:'none',background:'transparent',color:'var(--c-mu)',cursor:'pointer',fontSize:'13px',padding:'4px 6px'}}>✕</button>
+                </td>
+                {GRID_COLS.map((col,c)=>(
+                  <td key={col.k} style={{padding:0,borderRight:'1px solid var(--c-bo)',minWidth:col.w}}>
+                    <input
+                      ref={el=>{cellRefs.current[`${r}-${c}`]=el;}}
+                      list={col.type==='fmt'?'grid-fmt-list':undefined}
+                      style={cellInp}
+                      value={q[col.k]||''}
+                      placeholder={col.ph||''}
+                      onChange={e=>setCell(q.id,col.k,e.target.value)}
+                      onPaste={e=>onPaste(e,r,c)}
+                      onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();focusCell(r+1,c);}}}
+                      onFocus={e=>{e.target.style.borderColor='var(--c-t)';e.target.style.background='var(--c-wh)';}}
+                      onBlur={e=>{
+                        e.target.style.borderColor='transparent';e.target.style.background='transparent';
+                        if(col.k==='format')normFmtCell(q.id,e.target.value);
+                        else if(col.k==='answer')setCell(q.id,'answer',normalizeImportAnswer(e.target.value,q.format));
+                      }}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <datalist id="grid-fmt-list">{FORMATS.map(f=><option key={f} value={f}/>)}</datalist>
+    </div>
+  );
+}
+
+export function QuestionDB({questions,setQuestions,programs=[],courseTags={},setCourseTags=()=>{},showToast,showConfirm,initialEditMode=false,initialGridMode=false}){
   const[mode,setMode]=useState('list'); // 'list' | 'form'
   const[editing,setEditing]=useState(null);
   const[search,setSearch]=useState('');
@@ -1856,7 +2105,11 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
   const[filterProgram,setFilterProgram]=useState('');
   const[page,setPage]=useState(0);
   const[pageSize,setPageSize]=useState(15);
-  const[editMode,setEditMode]=useState(false);
+  const[editMode,setEditMode]=useState(initialEditMode);
+  const[gridMode,setGridMode]=useState(initialGridMode);
+  const[wordPreview,setWordPreview]=useState(null);
+  const[wordBusy,setWordBusy]=useState(false);
+  const wordRef=useRef(null);
   const[showImportInfo,setShowImportInfo]=useState(false);
   const importRef=useRef(null);
 
@@ -1928,6 +2181,39 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
         showToast('Frage gelöscht.','success');
       },
     });
+  };
+  const downloadVorlage=()=>{
+    dlFile(buildVorlageDocx(),'AIM_Fragen-Vorlage.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    showToast('Word-Vorlage heruntergeladen.','success');
+  };
+  const requestWordImport=async file=>{
+    if(!file)return;
+    setWordBusy(true);
+    try{
+      const buf=await file.arrayBuffer();
+      const {questions:pq,courseTags:pt}=await parseDocxQuestions(buf,programs);
+      if(!pq.length){showToast('In der Word-Datei wurden keine ausgefüllten Fragen gefunden.','warning');return;}
+      const parsed={questions:pq,programs:[],courseTags:pt,savedExams:[]};
+      const diff=computeExcelImportDiff(parsed,{questions,programs,courseTags,savedExams:[]});
+      setWordPreview({diff,parsed,fileName:file.name});
+    }catch(err){
+      console.error('Word-Import:',err);
+      showToast(err?.message||'Word-Datei konnte nicht gelesen werden.','error');
+    }finally{ setWordBusy(false); }
+  };
+  const applyWordPreview=()=>{
+    if(!wordPreview)return;
+    try{
+      applyExcelImport(wordPreview.diff,{questions,programs,courseTags,savedExams:[]},{
+        setQuestions,setPrograms:()=>{},setCourseTags,setSavedExams:()=>{},
+        saveLastBackup:()=>{},normalizePrograms:p=>p,
+      });
+      const d=wordPreview.diff;
+      showToast(`Word-Import: ${d.questions.add.length} neue Fragen${d.questions.update.length?`, ${d.questions.update.length} aktualisiert`:''}.`,'success');
+    }catch(err){
+      console.error('applyWordPreview:',err);
+      showToast('Import konnte nicht angewendet werden.','error');
+    }finally{ setWordPreview(null); }
   };
   const importFile=e=>{
     const file=e.target.files[0];
@@ -2086,11 +2372,20 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
     <div style={{padding:28}}>
       <SectionHeader title="Fragen Datenbank" sub={`${questions.length} Fragen · ${courses.length} Kurse`} action={
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-          <Btn ch={editMode?'🔒 Ansicht':'✏️ Bearbeiten'} onClick={()=>setEditMode(m=>!m)} v={editMode?'secondary':'ghost'} sm/>
-          {editMode&&<Btn ch="+ Neue Frage" onClick={openNew} v="primary"/>}
+          <Btn ch={editMode?'🔒 Ansicht':'✏️ Bearbeiten'} onClick={()=>setEditMode(m=>{const n=!m;if(!n)setGridMode(false);return n;})} v={editMode?'secondary':'ghost'} sm/>
+          {editMode&&<>
+            <Btn ch={gridMode?'📄 Listen-Ansicht':'⊞ Excel-Modus'} onClick={()=>setGridMode(g=>!g)} v="secondary" sm/>
+            {!gridMode&&<Btn ch="+ Neue Frage" onClick={openNew} v="primary"/>}
+            <Btn ch="↓ Vorlage (Word)" onClick={downloadVorlage} v="ghost" sm/>
+            <Btn ch={wordBusy?'… liest':'↑ Word importieren'} onClick={()=>wordRef.current?.click()} v="ghost" sm dis={wordBusy}/>
+            <input ref={wordRef} type="file" accept=".docx" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];e.target.value='';requestWordImport(f);}}/>
+          </>}
         </div>
       }/>
-      {(
+      {editMode&&<div style={{background:'var(--c-st)',border:'1px solid var(--c-bo)',borderRadius:6,padding:'8px 12px',marginBottom:14,fontSize:'12px',color:'var(--c-mu)',lineHeight:1.6}}>
+        <strong>⊞ Excel-Modus</strong> — viele Fragen schnell in einer Tabelle erfassen (Tab/Enter, Einfügen aus Excel). &nbsp;·&nbsp; <strong>↓ Vorlage (Word)</strong> — leere Word-Vorlage zum Ausfüllen für Dozierende herunterladen. &nbsp;·&nbsp; <strong>↑ Word importieren</strong> — eine ausgefüllte Vorlage einlesen (mit Vorschau vor dem Übernehmen).
+      </div>}
+      {!gridMode&&(
         <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}}>
           <input style={{...inp,width:240}} placeholder="Suche Frage, Kurs, Dozent…" value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}/>
           <select style={{...inp,width:200}} value={filterCourse} onChange={e=>{setFilterCourse(e.target.value);setPage(0);}}>
@@ -2117,6 +2412,7 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
         </div>
       )}
       {!editMode&&<div style={{background:'var(--c-st)',border:'1px solid var(--c-bo)',borderRadius:6,padding:'7px 12px',marginBottom:12,fontSize:'12px',color:'var(--c-mu)',display:'flex',alignItems:'center',gap:6}}>🔒 Lesemodus — klicke <strong>✏️ Bearbeiten</strong> um Fragen zu bearbeiten oder zu löschen.</div>}
+      {gridMode?<QuestionGrid questions={questions} setQuestions={setQuestions} showToast={showToast}/>:<>
       <div style={{background:'var(--c-wh)',border:'1px solid var(--c-bo)',borderRadius:8,overflow:'hidden'}}>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
           <thead>
@@ -2172,6 +2468,16 @@ export function QuestionDB({questions,setQuestions,programs=[],courseTags={},set
           <Btn ch="›" onClick={()=>setPage(p=>p+1)} v="ghost" sm dis={(page+1)*pageSize>=filtered.length}/>
         </div>
       )}
+      </>}
+      <ExcelImportPreviewModal
+        preview={wordPreview}
+        onCancel={()=>setWordPreview(null)}
+        onApply={applyWordPreview}
+        title="Word-Import — Vorschau"
+        intro="Die Fragen aus der ausgefüllten Word-Vorlage werden geprüft. Es werden nur neue Fragen hinzugefügt — bestehende Fragen und Kurse bleiben erhalten."
+        only={['questions','courseTags']}
+        bottomNote="Leere Zeilen und die Beispielzeile werden übersprungen. Pflichtfelder sind Kurs und Frage."
+      />
     </div>
   );
 }

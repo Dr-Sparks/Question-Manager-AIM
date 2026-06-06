@@ -70,8 +70,10 @@ Die zusätzliche Manuell-Installation auf Mac ist eine Folge davon, dass die App
 
 ### Fragen Datenbank
 - Alle Fragen an einem Ort verwalten
-- Fragen suchen, filtern, bearbeiten, importieren und exportieren
-- Arbeit direkt in der App oder in Excel möglich
+- Fragen suchen, filtern und bearbeiten
+- **Excel-Modus**: viele Fragen schnell in einer Tabelle erfassen (Tab/Enter, Einfügen aus Excel)
+- **Word-Vorlage** für Dozierende herunterladen und ausgefüllt wieder importieren (mit Vorschau)
+- Arbeit direkt in der App, im Excel-Modus oder über die Word-Vorlage möglich
 
 ### Weiterbildungsgänge
 - Pro Weiterbildungsgang 6 Semester verwalten

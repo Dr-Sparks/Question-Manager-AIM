@@ -490,3 +490,112 @@ export function buildDocx(questions) {
     { name: "word/document.xml", data: buildDocxDocumentXml(questions) },
   ]);
 }
+
+// ─── Word-Vorlage Generator ───────────────────────────────────────────────────
+// Mirror of the template builder in AIMExamManager.jsx. Kept here so the full
+// round-trip (build template → JSZip → parse) is testable in node.
+export const VORLAGE_COLS = ["Format", "Kurs", "Dozent/in", "Jahr", "Standort", "Frage", "Antwort A", "Antwort B", "Antwort C", "Antwort D", "Antwort E", "Richtige Antwort(en)", "Weiterbildungsgänge"];
+const VORLAGE_W = [1300, 1500, 1300, 600, 800, 2000, 1100, 1100, 1100, 1100, 1100, 1100, 1500];
+
+function dxCell(text, { bold = false, w = 1500, shade } = {}) {
+  const rpr = `<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>${bold ? "<w:b/><w:bCs/>" : ""}<w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>`;
+  const tcPr = `<w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>` : ""}<w:vAlign w:val="center"/></w:tcPr>`;
+  return `<w:tc>${tcPr}<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>${rpr}<w:t xml:space="preserve">${docxEsc(text)}</w:t></w:r></w:p></w:tc>`;
+}
+const dxRow = (cells) => `<w:tr>${cells.join("")}</w:tr>`;
+
+export function buildVorlageDocumentXml() {
+  const intro = [
+    docxParagraph("AIM Prüfungs-Manager — Fragen-Vorlage", true),
+    docxParagraph("Bitte tragen Sie Ihre Prüfungsfragen direkt in die Tabelle unten ein — eine Zeile pro Frage.", false),
+  ].join("");
+  const grid = VORLAGE_W.map((w) => `<w:gridCol w:w="${w}"/>`).join("");
+  const header = dxRow(VORLAGE_COLS.map((c, i) => dxCell(c, { bold: true, w: VORLAGE_W[i], shade: "E7E6E6" })));
+  const rows = [];
+  for (let r = 0; r < 18; r++) rows.push(dxRow(VORLAGE_W.map((w) => dxCell("", { w }))));
+  const bd = (c) => `<w:${c} w:val="single" w:sz="4" w:space="0" w:color="999999"/>`;
+  const borders = `<w:tblBorders>${bd("top")}${bd("left")}${bd("bottom")}${bd("right")}${bd("insideH")}${bd("insideV")}</w:tblBorders>`;
+  const tbl = `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/>${borders}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${header}${rows.join("")}</w:tbl>`;
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+    intro + tbl +
+    '<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="720" w:right="567" w:bottom="720" w:left="567" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>' +
+    "</w:body></w:document>"
+  );
+}
+
+export function buildVorlageDocx() {
+  return zipStore([
+    { name: "[Content_Types].xml", data: DOCX_CONTENT_TYPES },
+    { name: "_rels/.rels", data: DOCX_RELS },
+    { name: "word/document.xml", data: buildVorlageDocumentXml() },
+  ]);
+}
+
+// ─── Word-Vorlage Import (Parser) ─────────────────────────────────────────────
+// Mirror of the pure logic in AIMExamManager.jsx (parseDocxTableQuestions etc.).
+// Kept here so the docx-table → questions extraction is testable in node.
+
+// A "Richtige Antwort"-Zelle ("A", "A;C", "Richtig", "Ja" …) → internes Format.
+export function normalizeImportAnswer(raw, format) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (format === "Richtig/Falsch") {
+    if (/^(a|richtig|wahr|true|r|w)$/i.test(s)) return "A";
+    if (/^(b|falsch|false|f)$/i.test(s)) return "B";
+  }
+  if (format === "Ja/Nein") {
+    if (/^(a|ja|yes|j|y)$/i.test(s)) return "A";
+    if (/^(b|nein|no|n)$/i.test(s)) return "B";
+  }
+  const letters = [...new Set((s.toUpperCase().match(/[A-E]/g) || []))];
+  return letters.join(";");
+}
+
+export const FMT_IMPORT_MAP = {
+  "single choice": "Single Choice", single: "Single Choice", sc: "Single Choice", einfachauswahl: "Single Choice",
+  "multiple choice": "Multiple Choice", multiple: "Multiple Choice", mc: "Multiple Choice", mehrfachauswahl: "Multiple Choice",
+  "richtig/falsch": "Richtig/Falsch", "richtig falsch": "Richtig/Falsch", "wahr/falsch": "Richtig/Falsch", "true/false": "Richtig/Falsch", "r/f": "Richtig/Falsch",
+  "ja/nein": "Ja/Nein", "yes/no": "Ja/Nein", "j/n": "Ja/Nein",
+};
+
+// Pure: first <w:tbl> of a Word document.xml → {questions:[{id:'',...}], courseTags}.
+export function parseDocxTableQuestions(xml, programs = []) {
+  const tblMatch = xml.match(/<w:tbl[\s>][\s\S]*?<\/w:tbl>/);
+  if (!tblMatch) throw new Error("In der Datei wurde keine Tabelle gefunden. Bitte die mitgelieferte Vorlage verwenden.");
+  const tbl = tblMatch[0];
+  const trList = tbl.match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g) || [];
+  const cellText = (tc) => {
+    const parts = tc.match(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g) || [];
+    const raw = parts.map((p) => p.replace(/^<w:t(?:\s[^>]*)?>/, "").replace(/<\/w:t>$/, "")).join("");
+    return raw.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&").trim();
+  };
+  const rowCells = (tr) => (tr.match(/<w:tc[\s>][\s\S]*?<\/w:tc>/g) || []).map(cellText);
+  if (!trList.length) return { questions: [], courseTags: {} };
+  const header = rowCells(trList[0]).map((h) => h.toLowerCase());
+  const find = (name) => header.findIndex((h) => h.includes(name));
+  const col = { format: find("format"), course: find("kurs"), lecturer: find("dozent"), year: find("jahr"), location: find("standort"), question: find("frage"), a: find("antwort a"), b: find("antwort b"), c: find("antwort c"), d: find("antwort d"), e: find("antwort e"), answer: find("richtige"), wbg: find("weiterbildung") };
+  if (col.course < 0 && col.question < 0 && col.format < 0) throw new Error("Die Tabelle hat keine erkennbare Kopfzeile. Bitte die mitgelieferte Vorlage verwenden.");
+  const progByName = new Map((programs || []).map((p) => [String(p.name || "").trim().toLowerCase(), String(p.id)]));
+  const questions = [];
+  const courseTags = {};
+  for (let r = 1; r < trList.length; r++) {
+    const c = rowCells(trList[r]);
+    const get = (k) => (col[k] >= 0 ? String(c[col[k]] || "").trim() : "");
+    const question = get("question"), course = get("course");
+    const cleanseExample = (v) => (/^\(leer\)$/i.test(v) ? "" : v);
+    if (!question && !course && !get("a") && !get("answer")) continue; // leere Zeile
+    const format = FMT_IMPORT_MAP[get("format").toLowerCase()] || "Single Choice";
+    let optA = cleanseExample(get("a")), optB = cleanseExample(get("b")), optC = cleanseExample(get("c")), optD = cleanseExample(get("d")), optE = cleanseExample(get("e"));
+    if (format === "Richtig/Falsch") { optA = optA || "Richtig"; optB = optB || "Falsch"; optC = optD = optE = ""; }
+    if (format === "Ja/Nein") { optA = optA || "Ja"; optB = optB || "Nein"; optC = optD = optE = ""; }
+    const answer = normalizeImportAnswer(get("answer"), format);
+    questions.push({ id: "", year: get("year"), location: get("location"), lecturer: get("lecturer"), course, format, question, optA, optB, optC, optD, optE, answer });
+    const wbgCell = get("wbg");
+    if (course && wbgCell) {
+      const ids = wbgCell.split(/[,;]/).map((s) => s.trim()).filter(Boolean).map((n) => progByName.get(n.toLowerCase())).filter(Boolean);
+      if (ids.length) courseTags[course] = [...new Set([...(courseTags[course] || []), ...ids])];
+    }
+  }
+  return { questions, courseTags };
+}

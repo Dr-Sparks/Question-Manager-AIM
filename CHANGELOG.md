@@ -4,6 +4,29 @@ Alle bedeutsamen Änderungen am AIM Prüfungs-Manager werden hier dokumentiert.
 Format folgt grob [Keep a Changelog](https://keepachangelog.com/de/1.1.0/);
 Versionsschema folgt [SemVer](https://semver.org/lang/de/).
 
+## [1.0.21] — 2026-06-06
+
+### Neu
+- **Excel-Modus in der Fragen-Datenbank.** Im Bearbeiten-Modus öffnet **⊞ Excel-Modus**
+  eine editierbare Tabelle: eine Zeile pro Frage, alle Felder direkt antippbar.
+  **Tab** springt zur nächsten Zelle, **Enter** eine Zeile tiefer, **+ Zeile hinzufügen**
+  legt eine leere Zeile an. Aus Excel kopierte Zellbereiche lassen sich mit
+  **⌘V / Strg+V** einfügen — auch viele Zeilen und Spalten auf einmal; fehlende
+  Zeilen werden automatisch ergänzt. Format und richtige Antwort werden beim
+  Verlassen der Zelle automatisch in das richtige Format gebracht.
+- **Word-Vorlage für Dozierende.** **↓ Vorlage (Word)** lädt eine leere Word-Datei
+  mit fertiger Tabelle und kurzer Ausfüll-Anleitung herunter (Format · Kurs ·
+  Dozent/in · Jahr · Standort · Frage · Antworten A–E · richtige Antwort ·
+  Weiterbildungsgänge). Ideal, um sie an Dozierende zu schicken.
+- **Word importieren.** **↑ Word importieren** liest eine ausgefüllte Vorlage wieder
+  ein und zeigt — wie beim Excel-Import — eine **Vorschau** (wie viele Fragen neu
+  hinzukommen), bevor etwas übernommen wird. Versteht auch echte, in Word
+  gespeicherte Dateien.
+
+### Verbessert
+- **Anleitung erweitert.** Neuer Schritt **„Excel-Modus & Word-Vorlage“** in der
+  AIM-Anleitung (mit Live-Animation) sowie im druckbaren Anleitungs-Dokument.
+
 ## [1.0.20] — 2026-06-06
 
 ### Behoben

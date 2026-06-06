@@ -566,6 +566,36 @@ function StageQuestionDB() {
   );
 }
 
+// 2b. Excel-Modus + Word-Vorlage — the fast bulk-entry tools. We render the
+//     real QuestionDB pre-opened in edit + grid mode so the actual editable
+//     table and the new toolbar buttons are shown live.
+function StageQuestionTools() {
+  const stops = [
+    { x: "28%", y: "9%", tail: "top-right", text: "„⊞ Excel-Modus“ öffnet eine Tabelle: Fragen direkt eintippen (Tab/Enter) oder aus Excel einfügen (⌘V / Strg+V)." },
+    { x: "44%", y: "9%", tail: "top-right", text: "„↓ Vorlage (Word)“ lädt eine leere Word-Vorlage zum Ausfüllen herunter — ideal für Dozierende." },
+    { x: "53%", y: "9%", tail: "top-right", text: "„↑ Word importieren“ liest eine ausgefüllte Vorlage ein — mit Vorschau vor dem Übernehmen." },
+    { x: "16%", y: "20%", tail: "top-left", text: "Direkt darunter erklärt ein kurzer Hinweis, wofür jedes der drei Werkzeuge gut ist." },
+  ];
+  const step = useLoop(stops.length, 4200);
+  const s = stops[step];
+  return (
+    <PageStage scale={0.6} naturalWidth={1500} naturalHeight={1050}
+      overlay={<StageOverlay s={s} />}
+    >
+      <div style={{ display: "flex", minHeight: 1050 }}>
+        <QuestionDB
+          questions={mockQuestions}
+          setQuestions={noop}
+          programs={mockPrograms}
+          showToast={noop}
+          showConfirm={noop}
+          initialEditMode
+        />
+      </div>
+    </PageStage>
+  );
+}
+
 // 3. Weiterbildungsgänge. Render with settings that default to scale 55 +
 //    locked so it fits and shows the lock state.
 function StageProgramsView() {
@@ -1380,33 +1410,40 @@ function AimGuide() {
       <TourSection
         index={2}
         title="Fragen Datenbank — alle Fragen verwalten"
-        lead="Hier verwaltest du alle Fragen. Eine Frage gehört zu einem Kurs und erscheint automatisch in allen Weiterbildungsgängen, die diesen Kurs unterrichten. Im Bearbeiten-Modus kannst du Fragen hinzufügen, bearbeiten oder löschen — sonst ist die Tabelle gesperrt, um versehentliche Änderungen zu verhindern."
+        lead="Hier verwaltest du alle Fragen. Eine Frage gehört zu einem Kurs und erscheint automatisch in allen Weiterbildungsgängen, die diesen Kurs unterrichten. Im Bearbeiten-Modus kannst du Fragen hinzufügen, bearbeiten oder löschen — sonst ist die Tabelle gesperrt, um versehentliche Änderungen zu verhindern. Für die schnelle Masseneingabe gibt es zusätzlich den **Excel-Modus** und einen **Word-Import** (nächster Schritt)."
         stage={<StageQuestionDB />}
       />
 
       <TourSection
         index={3}
+        title="Excel-Modus & Word-Vorlage — Fragen schnell erfassen"
+        lead="Im Bearbeiten-Modus der Fragen Datenbank stehen drei Werkzeuge für die schnelle Eingabe bereit. Der **Excel-Modus** öffnet eine Tabelle, in der du Fragen direkt eintippst (Tab/Enter, Einfügen aus Excel). Mit **„↓ Vorlage (Word)“** lädst du eine leere Word-Vorlage zum Ausfüllen herunter — praktisch für Dozierende. **„↑ Word importieren“** liest eine ausgefüllte Vorlage wieder ein und zeigt vorher eine Vorschau."
+        stage={<StageQuestionTools />}
+      />
+
+      <TourSection
+        index={4}
         title="Weiterbildungsgänge — Semester und Module pflegen"
         lead="Pro Weiterbildungsgang erfasst du sechs Semester mit je vier Modulen. Jedes Modul ist ein Kurs mit Jahr und Dozent/in. Mit der Sperre verhinderst du Tippfehler im Alltag; im Bearbeiten-Modus kannst du jede Zelle ändern."
         stage={<StageProgramsView />}
       />
 
       <TourSection
-        index={4}
+        index={5}
         title="Prüfung erstellen — Module auswählen, Prüfung bauen"
         lead="Wähle einen Weiterbildungsgang und aktiviere die Module, aus denen die Prüfung zusammengestellt werden soll. Die App sammelt automatisch alle Fragen, die zu den gewählten Modulen passen. Der Standard sind 40 Fragen — die Zahl wird grün, wenn dieser Wert erreicht ist."
         stage={<StageExamBuilder />}
       />
 
       <TourSection
-        index={5}
+        index={6}
         title="Export & Download — als Word-Datei speichern"
         lead='Hier wird die Prüfung exportiert. Klick auf "↓ Word (.docx)" — die Word-Datei wird sofort heruntergeladen und lässt sich direkt im Testportal hochladen. Die korrekten Antworten sind fett markiert, damit Testportal sie automatisch erkennt.'
         stage={<StageExportView />}
       />
 
       <TourSection
-        index={6}
+        index={7}
         title="Einstellungen — Standardverhalten anpassen"
         lead="Hier legst du fest, wie sich die App standardmäßig verhält: ob die Weiterbildungsgang-Übersicht beim Start gesperrt ist, welche Zoomstufe voreingestellt ist und ob Hellmodus oder Dunkelmodus aktiv sein soll."
         stage={<StageSettings />}
@@ -1577,7 +1614,19 @@ const AIM_STEPS = [
       "Über die **Suchleiste** nach Stichwort suchen; die **Filter** grenzen auf Kurs, Dozent/in, Weiterbildungsgang oder Format ein.",
       "Die Spalte **Weiterbildungsgänge** zeigt als kleine Plaketten, zu welchen Gängen jede Frage passt.",
       "Eine **Zeile pro Frage** mit Kurs, Jahr, Dozent/in, Format und der korrekten Antwort.",
-      "Neue Fragen fügst du im Bearbeiten-Modus über **+ Neue Frage** hinzu.",
+      "Neue Fragen fügst du im Bearbeiten-Modus über **+ Neue Frage** hinzu — oder schneller über den **Excel-Modus** bzw. den **Word-Import** (nächster Abschnitt).",
+    ],
+  },
+  {
+    title: "Excel-Modus & Word-Vorlage — Fragen schnell erfassen",
+    lead:
+      "Für die schnelle Eingabe vieler Fragen gibt es im **Bearbeiten-Modus** der Fragen Datenbank drei zusätzliche Werkzeuge. Sie ergänzen **+ Neue Frage** und sind ideal, wenn viele Fragen auf einmal erfasst werden oder Dozierende ihre Fragen selbst beisteuern.",
+    points: [
+      "**⊞ Excel-Modus** öffnet eine **Tabellen-Ansicht**: eine Zeile pro Frage, Spalten für Kurs, Dozent/in, Jahr, Standort, Format, Frage, Antworten A–E und die richtige Antwort.",
+      "In der Tabelle springt **Tab** zur nächsten Zelle und **Enter** eine Zeile tiefer; **+ Zeile hinzufügen** legt eine leere Zeile an.",
+      "Aus Excel kopierte Zellen lassen sich mit **⌘V / Strg+V** direkt einfügen — auch mehrere Zeilen und Spalten auf einmal; fehlende Zeilen werden automatisch ergänzt.",
+      "**↓ Vorlage (Word)** lädt eine **leere Word-Vorlage** mit einer fertigen Tabelle und einer kurzen Ausfüll-Anleitung herunter — perfekt, um sie an Dozierende zu schicken.",
+      "**↑ Word importieren** liest eine ausgefüllte Vorlage wieder ein und zeigt eine **Vorschau** (wie viele Fragen neu hinzukommen), bevor etwas übernommen wird. Pflichtfelder sind **Kurs** und **Frage**.",
     ],
   },
   {

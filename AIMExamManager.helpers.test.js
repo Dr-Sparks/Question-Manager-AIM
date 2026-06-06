@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import JSZip from "jszip";
 import {
   COURSE_SLOT_COUNT,
+  buildVorlageDocx,
   autoSelectQuestions,
   autofillModulesForProgram,
   buildDocx,
@@ -10,7 +12,9 @@ import {
   computeExcelImportDiff,
   docxEsc,
   migrateCourseTagsFromMatrix,
+  normalizeImportAnswer,
   normalizeSlots,
+  parseDocxTableQuestions,
   programsForQuestion,
   semesterCalendarFor,
   shortProgramName,
@@ -803,4 +807,185 @@ test("buildDocx encodes umlauts/ß as UTF-8 bytes", () => {
   const hasSeq = (a, b) => bytes.some((v, i) => v === a && bytes[i + 1] === b);
   assert.ok(hasSeq(0xc3, 0x9c), "UTF-8 bytes for Ü");
   assert.ok(hasSeq(0xc3, 0x9f), "UTF-8 bytes for ß");
+});
+
+// ── Word-Vorlage Import: parseDocxTableQuestions + normalizeImportAnswer ──────
+// Build a realistic Word document.xml: instruction paragraphs BEFORE the table,
+// cells split across multiple <w:r>/<w:t> runs (Word fragments strings), rsid
+// attributes, and xml:space="preserve" — exactly what a teacher-saved file has.
+function wRuns(text) {
+  return text
+    .split("|")
+    .map(
+      (part) =>
+        `<w:r w:rsidR="00AB12CD"><w:rPr><w:rFonts w:ascii="Calibri"/></w:rPr>` +
+        `<w:t xml:space="preserve">${part}</w:t></w:r>`
+    )
+    .join("");
+}
+function wCell(text) {
+  return (
+    `<w:tc><w:tcPr><w:tcW w:w="1500" w:type="dxa"/></w:tcPr>` +
+    `<w:p w:rsidR="00AB12CD" w:rsidRDefault="00AB12CD">${text === "" ? "" : wRuns(text)}</w:p></w:tc>`
+  );
+}
+function wRow(cells) {
+  return `<w:tr w:rsidR="00AB12CD">${cells.map(wCell).join("")}</w:tr>`;
+}
+function wDoc(rows) {
+  const intro =
+    `<w:p><w:r><w:t>AIM Prüfungs-Manager — Fragen-Vorlage</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t xml:space="preserve">So füllen Sie die Tabelle aus:</w:t></w:r></w:p>`;
+  const tbl =
+    `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>` +
+    `<w:tblGrid><w:gridCol w:w="1500"/></w:tblGrid>${rows.map(wRow).join("")}</w:tbl>`;
+  return (
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+    `<w:body>${intro}${tbl}<w:sectPr/></w:body></w:document>`
+  );
+}
+const VORLAGE_HEADER = [
+  "Format", "Kurs", "Dozent/in", "Jahr", "Standort", "Frage",
+  "Antwort A", "Antwort B", "Antwort C", "Antwort D", "Antwort E",
+  "Richtige Antwort(en)", "Weiterbildungsgänge",
+];
+
+test("parseDocxTableQuestions: single-choice round-trip, joins split runs", () => {
+  const xml = wDoc([
+    VORLAGE_HEADER,
+    ["Single Choice", "Psychoonko|logie", "Dr. Muster", "2025", "Bern", "Welche Inter|vention?", "Psychoedukation", "Konfrontation", "Vermeidung", "Schweigen", "", "B", "WBS 55"],
+  ]);
+  const { questions } = parseDocxTableQuestions(xml, []);
+  assert.equal(questions.length, 1);
+  const q = questions[0];
+  assert.equal(q.id, "");
+  assert.equal(q.course, "Psychoonkologie"); // split runs joined
+  assert.equal(q.question, "Welche Intervention?");
+  assert.equal(q.format, "Single Choice");
+  assert.equal(q.lecturer, "Dr. Muster");
+  assert.equal(q.year, "2025");
+  assert.equal(q.location, "Bern");
+  assert.equal(q.optA, "Psychoedukation");
+  assert.equal(q.optD, "Schweigen");
+  assert.equal(q.optE, "");
+  assert.equal(q.answer, "B");
+});
+
+test("parseDocxTableQuestions: multiple-choice answer letters normalized to A;C", () => {
+  const xml = wDoc([VORLAGE_HEADER, ["Multiple Choice", "Kurs X", "", "", "", "Frage X?", "optA", "optB", "optC", "optD", "", "A, C", ""]]);
+  const { questions } = parseDocxTableQuestions(xml, []);
+  assert.equal(questions[0].format, "Multiple Choice");
+  assert.equal(questions[0].answer, "A;C");
+});
+
+test("parseDocxTableQuestions: Richtig/Falsch auto-fills options, maps Richtig→A", () => {
+  const xml = wDoc([VORLAGE_HEADER, ["Richtig/Falsch", "Kurs Y", "", "", "", "Aussage stimmt?", "", "", "", "", "", "Richtig", ""]]);
+  const q = parseDocxTableQuestions(xml, []).questions[0];
+  assert.equal(q.format, "Richtig/Falsch");
+  assert.equal(q.optA, "Richtig");
+  assert.equal(q.optB, "Falsch");
+  assert.equal(q.optC, "");
+  assert.equal(q.answer, "A");
+});
+
+test("parseDocxTableQuestions: Ja/Nein maps word answer to letter", () => {
+  const xml = wDoc([VORLAGE_HEADER, ["Ja/Nein", "Kurs Z", "", "", "", "Korrekt?", "", "", "", "", "", "Nein", ""]]);
+  const q = parseDocxTableQuestions(xml, []).questions[0];
+  assert.equal(q.optA, "Ja");
+  assert.equal(q.optB, "Nein");
+  assert.equal(q.answer, "B");
+});
+
+test("parseDocxTableQuestions: Weiterbildungsgänge column maps names to program ids", () => {
+  const programs = [{ id: "p1", name: "WBS 55 (2024)" }, { id: "p2", name: "WBS Zürich (2025)" }];
+  const xml = wDoc([VORLAGE_HEADER, ["Single Choice", "Kurs A", "", "", "", "F?", "a", "b", "", "", "", "A", "WBS 55 (2024), WBS Zürich (2025)"]]);
+  const { questions, courseTags } = parseDocxTableQuestions(xml, programs);
+  assert.equal(questions.length, 1);
+  assert.deepEqual(courseTags["Kurs A"], ["p1", "p2"]);
+});
+
+test("parseDocxTableQuestions: skips empty rows and (leer) placeholder", () => {
+  const xml = wDoc([
+    VORLAGE_HEADER,
+    ["", "", "", "", "", "", "", "", "", "", "", "", ""],
+    ["Single Choice", "K", "", "", "", "Q?", "a", "b", "c", "d", "(leer)", "A", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", "", ""],
+  ]);
+  const { questions } = parseDocxTableQuestions(xml, []);
+  assert.equal(questions.length, 1);
+  assert.equal(questions[0].optE, ""); // (leer) -> empty
+});
+
+test("parseDocxTableQuestions: columns matched by header name, order-independent", () => {
+  const reordered = ["Frage", "Kurs", "Format", "Richtige Antwort(en)", "Antwort A", "Antwort B"];
+  const xml = wDoc([reordered, ["Meine Frage?", "Mein Kurs", "Single Choice", "A", "Ja-Option", "Nein-Option"]]);
+  const q = parseDocxTableQuestions(xml, []).questions[0];
+  assert.equal(q.course, "Mein Kurs");
+  assert.equal(q.question, "Meine Frage?");
+  assert.equal(q.optA, "Ja-Option");
+  assert.equal(q.answer, "A");
+});
+
+test("parseDocxTableQuestions: no table → throws a German error", () => {
+  const xml = `<?xml version="1.0"?><w:document xmlns:w="x"><w:body><w:p><w:r><w:t>kein Tabelleninhalt</w:t></w:r></w:p></w:body></w:document>`;
+  assert.throws(() => parseDocxTableQuestions(xml, []), /keine Tabelle/);
+});
+
+test("parseDocxTableQuestions + computeExcelImportDiff: valid row → add, missing course → conflict", () => {
+  const xml = wDoc([
+    VORLAGE_HEADER,
+    ["Single Choice", "Kurs A", "", "", "", "Gute Frage?", "a", "b", "", "", "", "A", ""],
+    ["Single Choice", "", "", "", "", "Frage ohne Kurs?", "a", "b", "", "", "", "A", ""],
+  ]);
+  const { questions } = parseDocxTableQuestions(xml, []);
+  assert.equal(questions.length, 2);
+  const diff = computeExcelImportDiff(
+    { questions, programs: [], courseTags: {}, savedExams: [] },
+    { questions: [], programs: [], courseTags: {}, savedExams: [] }
+  );
+  assert.equal(diff.questions.add.length, 1);
+  assert.equal(diff.conflicts.length, 1);
+  assert.equal(diff.conflicts[0].type, "question");
+});
+
+test("normalizeImportAnswer: letters, words, separators, dedup", () => {
+  assert.equal(normalizeImportAnswer("a", "Single Choice"), "A");
+  assert.equal(normalizeImportAnswer("A;C", "Multiple Choice"), "A;C");
+  assert.equal(normalizeImportAnswer("A, C, C", "Multiple Choice"), "A;C");
+  assert.equal(normalizeImportAnswer("Richtig", "Richtig/Falsch"), "A");
+  assert.equal(normalizeImportAnswer("Falsch", "Richtig/Falsch"), "B");
+  assert.equal(normalizeImportAnswer("Ja", "Ja/Nein"), "A");
+  assert.equal(normalizeImportAnswer("nein", "Ja/Nein"), "B");
+  assert.equal(normalizeImportAnswer("", "Single Choice"), "");
+});
+
+test("buildVorlageDocx → JSZip → parse: real template is a valid docx, headers recognized", async () => {
+  const bytes = buildVorlageDocx();
+  assert.ok(bytes instanceof Uint8Array);
+  const zip = await JSZip.loadAsync(bytes);
+  assert.ok(zip.file("[Content_Types].xml"), "has [Content_Types].xml");
+  assert.ok(zip.file("word/document.xml"), "has word/document.xml");
+  const xml = await zip.file("word/document.xml").async("string");
+  // Empty template: table + headers present, but all data rows blank → 0 questions, no throw.
+  const { questions } = parseDocxTableQuestions(xml, []);
+  assert.equal(questions.length, 0);
+});
+
+test("docx round-trip via JSZip DEFLATE (what Word saves): filled table parses back", async () => {
+  const xml = wDoc([
+    VORLAGE_HEADER,
+    ["Single Choice", "Kurs RT", "Dr. X", "2025", "Bern", "Frage RT?", "a", "b", "c", "d", "", "C", "WBS 55 (2024)"],
+  ]);
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", "<x/>");
+  zip.file("word/document.xml", xml);
+  const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+  const reopened = await JSZip.loadAsync(buf);
+  const back = await reopened.file("word/document.xml").async("string");
+  const { questions, courseTags } = parseDocxTableQuestions(back, [{ id: "p1", name: "WBS 55 (2024)" }]);
+  assert.equal(questions.length, 1);
+  assert.equal(questions[0].course, "Kurs RT");
+  assert.equal(questions[0].answer, "C");
+  assert.deepEqual(courseTags["Kurs RT"], ["p1"]);
 });
